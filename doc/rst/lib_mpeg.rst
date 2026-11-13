@@ -32,9 +32,9 @@ interfaces are not interchangeable. The default backend exports a small
 push-input API; the optional backend retains the upstream libmpeg2 API. A shared
 backend interface is deferred until real player requirements establish it.
 
-The default build does not compile or link libmpeg2. Upstream pins and local
-adaptations are recorded in ``third_party/README.rst``; licensing is described
-in ``LICENSE.rst``.
+The default build does not compile or link libmpeg2. The upstream sources and
+what has been changed in them are described under `Third-party decoders`_;
+licensing is described in ``LICENSE.rst``.
 
 Not included
 ============
@@ -54,7 +54,7 @@ heap, can read files through stdio, and grows its input buffer on demand. The
 *adapter* is the XMOS-written layer that makes it usable on xcore and implements
 the ``mpeg.h`` API. PL_MPEG itself is compiled from the ``third_party/pl_mpeg``
 submodule, a fork whose only changes are speed optimisations that leave its
-output identical to upstream; ``third_party/README.rst`` lists them.
+output identical to upstream; `Third-party decoders`_ lists them.
 
 .. list-table:: Adapter source files (``lib_mpeg/src/pl_mpeg``)
    :header-rows: 1
@@ -144,6 +144,68 @@ Two upstream behaviours are corrected in the adapter, not by patching PL_MPEG:
 Both rely on PL_MPEG internal state, so they must be re-verified whenever the
 submodule pin is changed. A stream that ends without producing any picture
 returns ``MPEG_ERROR``.
+
+**********************
+Third-party decoders
+**********************
+
+Both decoders are Git submodules under ``third_party``. The submodules record
+the exact revisions in use.
+
+PL_MPEG
+=======
+
+PL_MPEG is by Dominic Szablewski (https://phoboslab.org) and is MIT-licensed;
+the upstream project is https://github.com/phoboslab/pl_mpeg. Two checkouts are
+kept:
+
+* ``third_party/pl_mpeg`` is the fork https://github.com/xross/pl_mpeg, based on
+  upstream as of 2025-12-30. This is what the library compiles. The header is
+  included directly, with no generated-source step.
+* ``third_party/pl_mpeg_upstream`` is unmodified upstream at the revision the
+  fork is based on. Only the host test program ``tests/plmpeg_upstream_ref.c``
+  and the colour-conversion test are built from it, so the byte-exact output
+  tests compare the library with the original and not with itself. It is not
+  part of any xcore build.
+
+The fork changes decoding speed only; its output must be identical to
+upstream. The changes are all in ``pl_mpeg.h``:
+
+* DCT coefficients are decoded from a 32-bit window of the bitstream instead of
+  one bounds-checked call per bit, falling back to the original reads within 48
+  bits of the end of the buffered data.
+* The IDCT skips columns and rows whose only non-zero coefficient is the first.
+* Motion compensation processes four pixels per 32-bit word.
+* Block output uses row pointers and skips constant blocks that add zero.
+* On xcore only, motion compensation reads and writes aligned words directly,
+  because unaligned word access traps. Frame memory must therefore be aligned
+  to four bytes, which the adapter's arena guarantees.
+
+The first four are portable C, intended for submission upstream. xcore-only
+changes in the fork carry an ``xcore:`` prefix in their commit subject so that
+the portable ones can be picked out. No audio, demux or timestamp-arithmetic
+changes have been made.
+
+libmpeg2
+========
+
+libmpeg2 (https://libmpeg2.sourceforge.io/) is licensed under GPL-2.0-or-later.
+``third_party/libmpeg2`` is a checkout of
+https://code.videolan.org/videolan/libmpeg2.git at a development revision dated
+2012-07-18. Its header identifies release 0.5.1, but it is not claimed to be
+byte-for-byte the 0.5.1 release archive. The original notices and the complete
+licence text are in the submodule.
+
+The checkout is unmodified. ``cmake/upstream.cmake`` makes one explicit,
+exact-match-checked change to a build-directory copy of ``decode.c``: it
+replaces the fixed ``BUFFER_SIZE`` with ``MPEG2_CHUNK_BYTES`` (default 32768).
+The generated source keeps the upstream notices and adds a dated comment
+recording the change. Native and xcore builds use the same change.
+
+Configuration, allocation guards, benchmark code and build files stay outside
+the third-party tree. The build selects scalar sources only, supplies
+``config.h``, and limits declared alignment to eight bytes on XTC; the benchmark
+allocator still returns 64-byte-aligned addresses.
 
 *****
 Usage
@@ -608,7 +670,7 @@ libmpeg2
 The native MPEG-2 tests compare against FFmpeg independently, with approximately
 70 dB observed PSNR and a maximum sample error of four. The compressed chunk
 buffer is bounded to 32768 bytes by a single checked build-time source
-transformation, described in ``third_party/README.rst``.
+transformation, described under `Third-party decoders`_.
 
 Other decoders evaluated
 ========================

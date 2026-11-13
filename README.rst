@@ -93,7 +93,7 @@ Licensing
 XMOS-authored sources are under the XMOS Public Licence: Version 1. PL_MPEG is
 MIT-licensed and libmpeg2 is GPL-2.0-or-later. See ``LICENSE.rst`` for the full
 terms, including the files that are MIT-licensed so the optional libmpeg2 build
-stays GPL-compatible, and ``third_party/README.rst`` for upstream pins.
+stays GPL-compatible.
 
 *******
 Support
