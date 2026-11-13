@@ -38,8 +38,8 @@ Features
 * Fixed 384 KiB static decoder arena and 32 KiB compressed-input buffer; no heap use.
 * Optional libmpeg2 backend for MPEG-2 evaluation, with a 400 KiB guarded arena.
 * Standalone XU316 benchmark examples for each backend with decode timing.
-* Native reference tests checked against pristine upstream and FFmpeg output.
-* Pinned, unmodified upstream submodules.
+* Native reference tests checked against unmodified upstream and FFmpeg output.
+* PL_MPEG fork with speed optimisations that keep output identical to upstream.
 
 ************
 Known issues

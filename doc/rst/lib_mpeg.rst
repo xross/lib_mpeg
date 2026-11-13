@@ -52,8 +52,9 @@ The PL_MPEG adapter
 PL_MPEG is a single-header desktop library: by default it allocates from the
 heap, can read files through stdio, and grows its input buffer on demand. The
 *adapter* is the XMOS-written layer that makes it usable on xcore and implements
-the ``mpeg.h`` API. PL_MPEG itself is compiled unmodified from the
-``third_party/pl_mpeg`` submodule.
+the ``mpeg.h`` API. PL_MPEG itself is compiled from the ``third_party/pl_mpeg``
+submodule, a fork whose only changes are speed optimisations that leave its
+output identical to upstream; ``third_party/README.rst`` lists them.
 
 .. list-table:: Adapter source files (``lib_mpeg/src/pl_mpeg``)
    :header-rows: 1
@@ -432,7 +433,16 @@ Performance
 
 All figures below are from the xsim simulator for 320 x 240 streams, with one
 decoder task on tile 1 of ``XK-EVK-XU316`` and no USB, display or audio tasks
-running. **No hardware or end-to-end playback speed has been established.**
+running. They were measured before the PL_MPEG fork's speed optimisations, and
+on short synthetic clips; they have not been re-measured since. This library's
+own benchmarks have not been run on hardware.
+
+End-to-end playback has been measured on hardware in the ``lib_xuh``
+``app_xuh_msc`` example (USB storage to an SPI LCD): 18.23 FPS on a 3025-frame,
+320 x 240 file, with a mean decode time of 36.9 ms a frame. On that real content
+the fork's optimisations reduced decode time from 40.6 ms. An application built
+with ``-mno-dual-issue`` would otherwise pass that flag on to the decoder (49.4
+ms a frame in the same test), so the library requests dual issue explicitly.
 
 Matched comparison
 ==================
@@ -543,11 +553,12 @@ Correctness
 PL_MPEG
 =======
 
-The adapter output matches a pristine native upstream build byte for byte, with
-one deliberate difference. At the pinned commit, upstream omits the last delayed
+The adapter and the PL_MPEG fork it compiles are tested together against a
+native build of unmodified upstream PL_MPEG (``third_party/pl_mpeg_upstream``),
+and must match it byte for byte, with one deliberate difference. At the pinned commit, upstream omits the last delayed
 anchor picture when the final coded picture is a B picture. The adapter detects
 that end-of-stream state and releases the pending picture exactly once. This
-reads pinned upstream private state but does not edit upstream source.
+reads PL_MPEG private state and is done in the adapter, not in the fork.
 Regression tests require all 24 pictures, including the extra final one, for
 every refill size and across 30 repeat decodes of each fixture.
 

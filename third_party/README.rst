@@ -4,20 +4,46 @@ Upstream dependency and local adaptation
 Default: PL_MPEG
 ----------------
 
-* Project/repository: https://github.com/phoboslab/pl_mpeg.
-* Location: ``third_party/pl_mpeg`` (Git submodule).
-* Pinned commit: ``c871f2be022ece7ef4f64230b4fb8e1fb9eb6023`` (2025-12-30).
+* Upstream project: https://github.com/phoboslab/pl_mpeg.
 * License: MIT, declared in the header and upstream README.
 * Original attribution: Dominic Szablewski, https://phoboslab.org.
 
-The checkout is pristine and the header is included directly; no generated-source
-transformation or fork is used. ``lib_mpeg/src/pl_mpeg/mpeg_video.c`` defines
-upstream's documented allocation, buffer-size and no-stdio macros. Decoder
+Two checkouts are kept:
+
+* ``third_party/pl_mpeg``: the fork https://github.com/xross/pl_mpeg, branch
+  ``master``, based on upstream commit
+  ``c871f2be022ece7ef4f64230b4fb8e1fb9eb6023`` (2025-12-30). This is what the
+  library compiles.
+* ``third_party/pl_mpeg_upstream``: https://github.com/phoboslab/pl_mpeg pinned
+  at that same upstream commit and never edited. Only the host test program
+  ``tests/plmpeg_upstream_ref.c`` is built from it, so the byte-exact output
+  test compares the fork with the original, not with itself. It is not part
+  of any xcore build.
+
+The fork changes decoding speed only; its output is required to be identical to
+upstream. The changes are all in ``pl_mpeg.h``. The first four are portable C,
+one commit each, intended for submission upstream; the fifth is xcore-specific
+and its commit subject is prefixed ``xcore:``, as any later xcore-only change
+should be, so that the portable commits can be cherry-picked:
+
+* DCT coefficients are decoded from a 32-bit window of the bitstream instead of
+  one bounds-checked call per bit, falling back to the original reads within 48
+  bits of the end of the buffered data.
+* The IDCT skips columns and rows whose only non-zero coefficient is the first.
+* Motion compensation processes four pixels per 32-bit word.
+* Block output uses row pointers and skips constant blocks that add zero.
+* On xcore only, motion compensation reads and writes aligned words directly,
+  because unaligned word access traps. Frame memory must therefore be aligned
+  to four bytes, which the adapter's arena guarantees.
+
+The header is included directly; no generated-source transformation is used.
+``lib_mpeg/src/pl_mpeg/mpeg_video.c`` defines upstream's documented allocation,
+buffer-size and no-stdio macros. Decoder
 allocations are routed to a guarded static arena, not a heap. The adapter
 preflights initial dimensions and MPEG-2 extensions, bounds compressed input,
 and drains the delayed anchor that upstream misses after a final coded B picture.
 That drain uses private state at this exact pin; native/FFmpeg tests cover it.
-No VPU, audio, demux or timestamp-arithmetic changes have been made to upstream.
+No VPU, audio, demux or timestamp-arithmetic changes have been made.
 
 Optional: libmpeg2
 ------------------
