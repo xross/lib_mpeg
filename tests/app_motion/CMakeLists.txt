@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.21)
+include($ENV{XMOS_CMAKE_PATH}/xcommon.cmake)
+project(test_mpeg_motion)
+set(APP_HW_TARGET XK-EVK-XU316)
+set(APP_C_SRCS ../motion_test.c)
+set(APP_INCLUDES ../../third_party/pl_mpeg)
+set(APP_COMPILER_FLAGS -O3 -g -report -mcmodel=large -mdual-issue -fwrapv)
+# Finite standalone test: JTAG logging only after all kernel checks complete.
+XMOS_REGISTER_APP()
+set_target_properties(${APP_BUILD_TARGETS} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
