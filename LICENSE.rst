@@ -95,8 +95,10 @@ intended distribution must be reviewed before adoption.
 
 **PL_MPEG (default backend)**
 
-``third_party/pl_mpeg`` is a Git submodule of https://github.com/phoboslab/pl_mpeg,
-MIT-licensed as stated in its ``pl_mpeg.h`` header and upstream README. Preserve
+``third_party/pl_mpeg`` is a Git submodule of https://github.com/xross/pl_mpeg,
+a fork of https://github.com/phoboslab/pl_mpeg carrying speed optimisations;
+``third_party/pl_mpeg_upstream`` is the unmodified original, used only by a
+host test. Both are MIT-licensed as stated in its ``pl_mpeg.h`` header and upstream README. Preserve
 its original attribution (Dominic Szablewski, https://phoboslab.org) and licence
 notice in source and in the documentation accompanying any binary. The default
 build does not compile or link libmpeg2.

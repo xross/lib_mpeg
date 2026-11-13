@@ -20,8 +20,11 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
     target_compile_definitions(mpeg_bench PRIVATE _POSIX_C_SOURCE=200809L)
     add_executable(mpeg_api_test tests/mpeg_api_test.c)
     # Desktop-only oracle, independent of our bounded allocator/feed adapter.
+    # It is built from the untouched upstream checkout, never from the fork in
+    # third_party/pl_mpeg, so the exact-output test cannot compare the fork
+    # with itself.
     add_executable(plmpeg_upstream_ref tests/plmpeg_upstream_ref.c)
-    target_include_directories(plmpeg_upstream_ref PRIVATE third_party/pl_mpeg)
+    target_include_directories(plmpeg_upstream_ref PRIVATE third_party/pl_mpeg_upstream)
     target_compile_options(plmpeg_upstream_ref PRIVATE -O3 -fwrapv)
     foreach(target mpeg_bench mpeg_api_test)
         target_compile_options(${target} PRIVATE ${MPEG_COLD_OPT} -Wall -Wextra -Werror)
