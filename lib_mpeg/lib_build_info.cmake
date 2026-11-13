@@ -4,7 +4,10 @@ set(LIB_DEPENDENT_MODULES "")
 set(MPEG_BACKEND pl_mpeg CACHE STRING "Decoder backend: pl_mpeg (MIT) or libmpeg2 (GPL)")
 set_property(CACHE MPEG_BACKEND PROPERTY STRINGS pl_mpeg libmpeg2)
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/optimization.cmake)
-set(LIB_COMPILER_FLAGS ${MPEG_COLD_OPT} -g -fwrapv)
+# XCommon CMake applies the application's flags to library sources too. State
+# dual issue explicitly so an application built with -mno-dual-issue does not
+# silently make the decoder single issue; these options are appended last.
+set(LIB_COMPILER_FLAGS ${MPEG_COLD_OPT} -g -fwrapv -mdual-issue)
 if(MPEG_BACKEND STREQUAL "pl_mpeg")
     set(LIB_INCLUDES api src/pl_mpeg ../third_party/pl_mpeg)
     set(LIB_C_SRCS src/pl_mpeg/mpeg_video.c src/pl_mpeg/mpeg_memory.c)
@@ -12,12 +15,12 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
     # motion compensation. Keep it hot; the static allocator uses the default.
     # Supported push input installs no callbacks, but upstream callback branches
     # still prevent complete automatic stack analysis.
-    set(LIB_COMPILER_FLAGS_mpeg_video.c -O3 -g -fwrapv -Wno-xcore-fptrgroup)
+    set(LIB_COMPILER_FLAGS_mpeg_video.c -O3 -g -fwrapv -mdual-issue -Wno-xcore-fptrgroup)
 elseif(MPEG_BACKEND STREQUAL "libmpeg2")
     set(LIB_INCLUDES api src/libmpeg2 ../third_party/libmpeg2/include ../third_party/libmpeg2/libmpeg2)
     list(APPEND LIB_COMPILER_FLAGS -Wno-xcore-fptrgroup)
     foreach(hot_file decode.c slice.c idct.c motion_comp.c)
-        set(LIB_COMPILER_FLAGS_${hot_file} -O3 -g -fwrapv -Wno-xcore-fptrgroup)
+        set(LIB_COMPILER_FLAGS_${hot_file} -O3 -g -fwrapv -mdual-issue -Wno-xcore-fptrgroup)
     endforeach()
     include(${CMAKE_CURRENT_LIST_DIR}/../cmake/upstream.cmake)
     mpeg2_prepare_sources(mpeg2_sources)
