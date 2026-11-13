@@ -27,7 +27,8 @@ Two backends are available. Only one is compiled into a build:
      - ``lib_mpeg/api/mpeg2.h``
      - GPL-2.0-or-later
 
-Both are scalar C: there are no VPU kernels and no parallel decoding. The two
+Both decoders are scalar C, without VPU kernels or parallel decoding; the
+separate RGB565 colour converter is VPU-accelerated on XS3. The two decoder
 interfaces are not interchangeable. The default backend exports a small
 push-input API; the optional backend retains the upstream libmpeg2 API. A shared
 backend interface is deferred until real player requirements establish it.
@@ -328,12 +329,68 @@ combination against unmodified upstream.
 
 The two-row form exists so that a picture can be converted in strips without
 holding a second full frame, and on a different tile from the decoder: it
-shares no state with it. An odd width is rounded up to even, and output is
-fastest when both output rows are 4-byte aligned. The conversion uses about
-6 KB of lookup tables, built on the first call, on whichever tile calls it; make
-that first call from a single task. It is scalar code, not VPU-vectorised. In
-the ``lib_xuh`` ``app_xuh_msc`` example it takes about 13.4 ms for a 320 x 240
-frame, including receiving the picture over a channel.
+shares no state with it. An odd width is rounded up to even.
+
+XS3 builds use a fused VPU converter by default. It processes 16 pixels in each
+of two rows, reusing chroma contributions across both rows. All six input/output
+pointers must be 4-byte aligned for the vector path; other alignments, small
+widths and tails use exact scalar arithmetic. Neither path reads beyond the
+documented input buffers. The wrapper stages a padded 128-byte input block;
+the assembly reserves 256 bytes of stack, including register saves, plus small
+constant vectors in code memory. There are no lookup tables or extra image
+buffers, and each task owns its scratch.
+
+The VPU's rounded saturation is explicitly compensated to preserve the scalar
+Q16 arithmetic floors. Channels are clipped and quantised to 5/6/5 bits, then
+packed directly into high-byte-first output using raw accumulator low halves.
+The exhaustive hardware test checks that SIMD lane order, byte duplication,
+rounding and packing agree with unmodified upstream PL_MPEG for every colour.
+
+Configure an XCommon CMake application with ``-DMPEG_RGB565_VPU=OFF`` to retain
+the original tabulated scalar converter. Non-XS3 and native builds also use that
+implementation. It allocates 5504 bytes of lookup arrays and a readiness flag;
+its first call must run from one task. The native test suite additionally builds
+a portable model of the VPU coefficient decomposition and rounding, but that
+model does not validate instruction execution or measure xcore performance.
+
+On XU316 at 600 MHz, XTC Tools 15.3.1, a single-task conversion-only benchmark
+of 32 equivalent 320 x 240 frames measured **12684 us/frame scalar** versus
+**5756 us/frame VPU**, a **2.20x** speedup. Both checksums were ``cb839b61``.
+Input staging is included and the aligned full-width path is timed; channel
+reception, decoding and physical SPI are not. The test prints only outside the
+timed section, using JTAG I/O; these are not full-player FPS measurements.
+
+A matched ILI9341 ``lib_xuh`` player run, with the decoder unchanged between
+the two builds, measured 20.20 FPS scalar versus 21.87 FPS VPU, an 8.3% increase.
+Second-play conversion means were 12.369 ms versus 5.740 ms; receive stayed at
+1.245 ms and decode at 30.581 ms. Both builds completed two 3025-frame plays with
+zero errors. Tile-0 code/data/stack usage fell from 335616 to 331836 bytes, saving
+3780 bytes; tile 1 was unchanged. Decoder and LCD backpressure limit the overall
+gain, so the converter speedup must not be presented as the full-player speedup.
+
+Separate follow-up measurements kept the VPU converter unchanged: early YUV
+acknowledgement in the player reached 22.05 FPS; adding only single-evaluation
+motion-compensation averaging and aligned xcore destination reads reached
+**22.33 FPS**. Each build completed two full 3025-frame plays with zero errors.
+Tile-1 decode time fell from 30.581 to 29.344 ms/frame, while tile-0 conversion
+and 41.859 ms/frame SPI output stayed unchanged. The retained scalar decoder
+change saves 88 bytes on tile 1 relative to ACK-only. An attempted source-load
+reuse/alignment-hoisting loop was bit-exact but regressed to 21.86 FPS and was
+removed. These are integrated player results, not standalone kernel timings or
+additional converter speedups; full tile-labelled stages and memory totals are
+recorded in ``lib_xuh/examples/app_xuh_msc/doc/rst/pipeline.rst``.
+
+Run the same exhaustive test and conversion benchmark on hardware::
+
+    cmake -G "Unix Makefiles" -S tests/app_rgb565 -B build-rgb565-vpu \
+      -DMPEG_RGB565_VPU=ON
+    xmake -C build-rgb565-vpu -j 8
+    xrun --io build-rgb565-vpu/bin/test_mpeg_rgb565.xe
+
+Use a separate build directory with ``-DMPEG_RGB565_VPU=OFF`` for the scalar
+comparison. This finite test has no timing-sensitive USB/display tasks; its
+JTAG output occurs before and after the timed loop. Do not use JTAG logging for
+full-player throughput measurements, which require xSCOPE instead.
 
 ***************
 Preparing input

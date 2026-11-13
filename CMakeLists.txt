@@ -45,11 +45,19 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
     add_test(NAME mpeg_api COMMAND mpeg_api_test)
     add_test(NAME mpeg_motion COMMAND mpeg_motion_test)
     add_test(NAME mpeg_rgb565 COMMAND mpeg_rgb565_test)
+    add_executable(mpeg_rgb565_vpu_test tests/rgb565_test.c tests/rgb565_vpu_model.c
+        lib_mpeg/src/rgb565/mpeg_rgb565.c)
+    target_include_directories(mpeg_rgb565_vpu_test PRIVATE lib_mpeg/api
+        lib_mpeg/src/rgb565 third_party/pl_mpeg_upstream)
+    target_compile_definitions(mpeg_rgb565_vpu_test PRIVATE MPEG_RGB565_VPU=1 MPEG_RGB565_VPU_EMULATE=1)
+    target_compile_options(mpeg_rgb565_vpu_test PRIVATE -O3 -fwrapv)
+    list(APPEND test_targets mpeg_rgb565_vpu_test)
+    add_test(NAME mpeg_rgb565_vpu COMMAND mpeg_rgb565_vpu_test)
     add_test(NAME mpeg1_reference COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_plmpeg.py --bench $<TARGET_FILE:mpeg_bench>
         --api-test $<TARGET_FILE:mpeg_api_test> --upstream $<TARGET_FILE:plmpeg_upstream_ref>
         --work ${CMAKE_CURRENT_BINARY_DIR}/fixtures)
-    set_tests_properties(mpeg_api mpeg_motion mpeg_rgb565 mpeg1_reference PROPERTIES
+    set_tests_properties(mpeg_api mpeg_motion mpeg_rgb565 mpeg_rgb565_vpu mpeg1_reference PROPERTIES
         ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1" TIMEOUT 120)
 elseif(MPEG_BACKEND STREQUAL "libmpeg2")
     include(cmake/upstream.cmake)
