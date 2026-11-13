@@ -10,12 +10,14 @@ include(${CMAKE_CURRENT_LIST_DIR}/../cmake/optimization.cmake)
 set(LIB_COMPILER_FLAGS ${MPEG_COLD_OPT} -g -fwrapv -mdual-issue)
 if(MPEG_BACKEND STREQUAL "pl_mpeg")
     set(LIB_INCLUDES api src/pl_mpeg ../third_party/pl_mpeg)
-    set(LIB_C_SRCS src/pl_mpeg/mpeg_video.c src/pl_mpeg/mpeg_memory.c)
+    set(LIB_C_SRCS src/pl_mpeg/mpeg_video.c src/pl_mpeg/mpeg_memory.c src/rgb565/mpeg_rgb565.c)
     # This TU contains the entire single-header decoder, including IDCT and
     # motion compensation. Keep it hot; the static allocator uses the default.
     # Supported push input installs no callbacks, but upstream callback branches
     # still prevent complete automatic stack analysis.
     set(LIB_COMPILER_FLAGS_mpeg_video.c -O3 -g -fwrapv -mdual-issue -Wno-xcore-fptrgroup)
+    # Per-pixel colour conversion is also hot.
+    set(LIB_COMPILER_FLAGS_mpeg_rgb565.c -O3 -g -fwrapv -mdual-issue)
 elseif(MPEG_BACKEND STREQUAL "libmpeg2")
     set(LIB_INCLUDES api src/libmpeg2 ../third_party/libmpeg2/include ../third_party/libmpeg2/libmpeg2)
     list(APPEND LIB_COMPILER_FLAGS -Wno-xcore-fptrgroup)

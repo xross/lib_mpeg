@@ -10,10 +10,12 @@ enable_testing()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 if(MPEG_BACKEND STREQUAL "pl_mpeg")
-    add_library(mpeg_scalar STATIC lib_mpeg/src/pl_mpeg/mpeg_video.c lib_mpeg/src/pl_mpeg/mpeg_memory.c)
+    add_library(mpeg_scalar STATIC lib_mpeg/src/pl_mpeg/mpeg_video.c lib_mpeg/src/pl_mpeg/mpeg_memory.c
+        lib_mpeg/src/rgb565/mpeg_rgb565.c)
     target_include_directories(mpeg_scalar PUBLIC lib_mpeg/api PRIVATE lib_mpeg/src/pl_mpeg third_party/pl_mpeg)
     target_compile_options(mpeg_scalar PRIVATE ${MPEG_COLD_OPT} -fwrapv)
-    set_source_files_properties(lib_mpeg/src/pl_mpeg/mpeg_video.c PROPERTIES COMPILE_OPTIONS -O3)
+    set_source_files_properties(lib_mpeg/src/pl_mpeg/mpeg_video.c lib_mpeg/src/rgb565/mpeg_rgb565.c
+        PROPERTIES COMPILE_OPTIONS -O3)
     # Native and xcore front ends reuse the owning example's benchmark core.
     add_executable(mpeg_bench tools/mpeg_bench_main.c examples/app_plmpeg_benchmark/src/plmpeg_benchmark.c)
     target_include_directories(mpeg_bench PRIVATE examples/app_plmpeg_benchmark/src)
@@ -30,14 +32,20 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
         target_compile_options(${target} PRIVATE ${MPEG_COLD_OPT} -Wall -Wextra -Werror)
         target_link_libraries(${target} PRIVATE mpeg_scalar)
     endforeach()
+    # RGB565 conversion checked against unmodified upstream's RGB conversion.
+    add_executable(mpeg_rgb565_test tests/rgb565_test.c)
+    target_include_directories(mpeg_rgb565_test PRIVATE third_party/pl_mpeg_upstream)
+    target_compile_options(mpeg_rgb565_test PRIVATE -O1 -fwrapv)
+    target_link_libraries(mpeg_rgb565_test PRIVATE mpeg_scalar)
     set(decoder_target mpeg_scalar)
-    set(test_targets mpeg_bench mpeg_api_test plmpeg_upstream_ref)
+    set(test_targets mpeg_bench mpeg_api_test plmpeg_upstream_ref mpeg_rgb565_test)
     add_test(NAME mpeg_api COMMAND mpeg_api_test)
+    add_test(NAME mpeg_rgb565 COMMAND mpeg_rgb565_test)
     add_test(NAME mpeg1_reference COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_plmpeg.py --bench $<TARGET_FILE:mpeg_bench>
         --api-test $<TARGET_FILE:mpeg_api_test> --upstream $<TARGET_FILE:plmpeg_upstream_ref>
         --work ${CMAKE_CURRENT_BINARY_DIR}/fixtures)
-    set_tests_properties(mpeg_api mpeg1_reference PROPERTIES
+    set_tests_properties(mpeg_api mpeg_rgb565 mpeg1_reference PROPERTIES
         ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1" TIMEOUT 120)
 elseif(MPEG_BACKEND STREQUAL "libmpeg2")
     include(cmake/upstream.cmake)

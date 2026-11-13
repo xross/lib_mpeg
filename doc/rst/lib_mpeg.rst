@@ -41,8 +41,8 @@ Not included
 
 Upstream PL_MPEG contains program-stream demuxing and MP2 audio decoding, but the
 adapter exposes and validates **video only**. It does not accept a multiplexed
-``.mpg`` file and provides no audio samples. Demuxing, audio, colour conversion,
-display or storage integration and playback pacing are left to the application.
+``.mpg`` file and provides no audio samples. Demuxing, audio, display or storage
+integration and playback pacing are left to the application.
 No audio/video synchronisation claim is made.
 
 ***********************
@@ -235,6 +235,37 @@ null pointer into upstream code, which does not consistently check for it.
 
 Only one decoder can be open per tile. Picture pointers are tile-local and
 read-only; do not pass them to another tile as if they were shared memory.
+
+Colour conversion to RGB565
+===========================
+
+``mpeg_rgb565.h`` converts decoded pictures for displays that take 16-bit
+pixels. It is available with the PL_MPEG backend only.
+
+.. code-block:: c
+
+    #include "mpeg_rgb565.h"
+
+    /* A whole frame; stride is the bytes from one output row to the next. */
+    mpeg_frame_to_rgb565(&frame, framebuffer, 2 * frame.width);
+
+    /* Or two rows at a time, sharing one row of chroma. */
+    mpeg_yuv420_rows_to_rgb565(y0, y1, cb, cr, out0, out1, width);
+
+Input is limited-range BT.601 YUV 4:2:0, as decoded. Each output pixel is two
+bytes, most significant first (``RRRRRGGG GGGBBBBB``), the order SPI display
+controllers such as the ST7789 expect. The result is identical to PL_MPEG's own
+RGB conversion truncated to 5/6/5 bits; the test suite checks every Y/Cb/Cr
+combination against unmodified upstream.
+
+The two-row form exists so that a picture can be converted in strips without
+holding a second full frame, and on a different tile from the decoder: it
+shares no state with it. An odd width is rounded up to even, and output is
+fastest when both output rows are 4-byte aligned. The conversion uses about
+6 KB of lookup tables, built on the first call, on whichever tile calls it; make
+that first call from a single task. It is scalar code, not VPU-vectorised. In
+the ``lib_xuh`` ``app_xuh_msc`` example it takes about 13.4 ms for a 320 x 240
+frame, including receiving the picture over a channel.
 
 ***************
 Preparing input

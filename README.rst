@@ -7,17 +7,16 @@ lib_mpeg: MPEG video decoding
 :vendor: xross
 :version: 0.1.0
 :scope: Experimental
-:description: Experimental scalar MPEG video decoding for XCORE with selectable backends
+:description: MPEG video decoding for XCORE with selectable backends
 :category: Vision
-:keywords: MPEG-1, MPEG-2, video, decoder, xcore
+:keywords: MPEG-1, MPEG-2, video, decoder
 :devices: xcore.ai
 
 *******
 Summary
 *******
 
-``lib_mpeg`` is an experimental MPEG video decoder for XCORE devices. It is a
-decoder bring-up and evaluation, not a complete media player.
+``lib_mpeg`` is an experimental MPEG video decoder for XCORE devices.
 
 The default backend is `PL_MPEG <https://github.com/phoboslab/pl_mpeg>`_, decoding
 MPEG-1 video elementary streams up to 320 x 240 through a small push-input API
@@ -25,9 +24,7 @@ with a fixed static memory arena. An optional
 `libmpeg2 <https://libmpeg2.sourceforge.io/>`_ backend can be selected instead to
 evaluate MPEG-2 decoding. Only one backend is compiled into a build.
 
-Both backends are scalar C running on one logical core. Build instructions, the
-API, resource usage and benchmark results are in the user guide,
-``doc/rst/lib_mpeg.rst``.
+Both backends are scalar C running on one thread.
 
 ********
 Features
@@ -36,6 +33,7 @@ Features
 * MPEG-1 video decoding (I, P and B pictures) to progressive YUV420, up to 320 x 240.
 * Push-input API: the application owns storage I/O and feeds compressed bytes.
 * Fixed 384 KiB static decoder arena and 32 KiB compressed-input buffer; no heap use.
+* YUV 4:2:0 to RGB565 colour conversion for 16-bit displays.
 * Optional libmpeg2 backend for MPEG-2 evaluation, with a 400 KiB guarded arena.
 * Standalone XU316 benchmark examples for each backend with decode timing.
 * Native reference tests checked against unmodified upstream and FFmpeg output.
@@ -45,11 +43,13 @@ Features
 Known issues
 ************
 
-* No VPU acceleration or parallel decoding; decode speed has only been measured
-  in the simulator, not on hardware.
+* No VPU acceleration or parallel decoding. Standalone decoder rates are
+  simulator measurements; the separate USB/LCD player has been measured on
+  hardware at 18.23 FPS with about 36.9 ms/frame spent decoding. That is an
+  integrated workload measurement, not a standalone decoder rate.
 * Video elementary streams (``.m1v``) only. Multiplexed ``.mpg`` program streams
   and MP2 audio are not supported.
-* No colour conversion, display, storage or audio output is included.
+* No display, storage or audio output is included.
 * Trusted input only: this is not a hardened validator for malformed or truncated
   streams.
 * One decoder per tile. Resolution changes, concatenated streams and seeking are
@@ -78,8 +78,7 @@ Required tools
 Required libraries (dependencies)
 *********************************
 
-* None. The upstream decoders are pinned Git submodules under ``third_party``;
-  clone with ``--recurse-submodules``.
+* None.
 
 *************************
 Related application notes
