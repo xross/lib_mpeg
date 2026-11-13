@@ -16,16 +16,19 @@ extern "C" {
  * order SPI display controllers such as the ST7789 expect. Results are
  * identical to PL_MPEG's own RGB conversion followed by truncation to 5/6/5
  * bits. No state is shared with the decoder, so these may be called on a
- * different tile from the one that decodes. They are not re-entrant on first
- * use: make the first call from one task. */
+ * different tile from the one that decodes. XS3 builds use the VPU by default;
+ * MPEG_RGB565_VPU=OFF selects the scalar lookup-table implementation. Only the
+ * scalar table initialisation is non-reentrant: make its first call from one
+ * task. The VPU implementation uses task-local stack scratch, with no tables. */
 
 /* Convert two picture rows that share one row of chroma.
  *   y0, y1      width luma samples each (the upper and lower row)
  *   cb, cr      (width + 1) / 2 chroma samples each
  *   out0, out1  2 * width bytes each, rounded up to an even width
  * An odd width is rounded up: one extra luma sample is read from each row and
- * one extra pixel written to each output. Output is fastest when out0 and out1
- * are both 4-byte aligned. */
+ * one extra pixel written to each output. The VPU fast path handles blocks of
+ * 16 pixels when all input and output pointers are 4-byte aligned. Other
+ * alignments and remaining pixels use an exact scalar fallback. */
 void mpeg_yuv420_rows_to_rgb565(const uint8_t *y0, const uint8_t *y1,
                                 const uint8_t *cb, const uint8_t *cr,
                                 uint8_t *out0, uint8_t *out1, unsigned width);

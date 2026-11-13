@@ -6,6 +6,9 @@
 #include "mpeg_rgb565.h"
 #define PL_MPEG_IMPLEMENTATION
 #include "pl_mpeg.h"
+#ifdef __xcore__
+#include <xcore/hwtimer.h>
+#endif
 
 /* Independent colour-conversion oracle: unmodified upstream PL_MPEG produces
  * RGB888; only the truncation to RGB565 is shared with the expected output. */
@@ -17,7 +20,11 @@ static void expect(const uint8_t *rgb888, const uint8_t *rgb565, unsigned pixels
     for (unsigned i = 0; i < pixels; ++i) {
         unsigned pixel = ((rgb888[3 * i] & 0xf8) << 8) | ((rgb888[3 * i + 1] & 0xfc) << 3) |
                          (rgb888[3 * i + 2] >> 3);
-        CHECK(rgb565[2 * i] == pixel >> 8 && rgb565[2 * i + 1] == (pixel & 255));
+        if (rgb565[2 * i] != pixel >> 8 || rgb565[2 * i + 1] != (pixel & 255)) {
+            printf("Pixel %u: expected=%04x actual=%02x%02x\n", i, pixel,
+                   rgb565[2 * i], rgb565[2 * i + 1]);
+            CHECK(0);
+        }
     }
 }
 
@@ -82,10 +89,73 @@ static void test_frame(void)
     }
 }
 
+/* Include SIMD block edges, odd widths and every input/output byte alignment.
+ * The public row helper rounds odd widths up; padding is explicitly supplied. */
+static void test_widths_and_alignment(void)
+{
+    enum { STRIDE = 48, OUT_STRIDE = 96 };
+    static uint8_t planes[4 * STRIDE + 4], rgb[STRIDE * 2 * 3];
+    static uint8_t out[OUT_STRIDE * 2 + 8];
+    for (unsigned i = 0; i < sizeof(planes); ++i) planes[i] = (uint8_t)(i * 73 + 19);
+    for (unsigned width = 1; width <= 35; ++width) {
+        unsigned rounded = (width + 1) & ~1u;
+        for (unsigned input_offset = 0; input_offset < 4; ++input_offset) {
+            plm_frame_t reference = {0};
+            reference.width = rounded; reference.height = 2;
+            reference.y.width = STRIDE; reference.y.height = 2;
+            reference.cb.width = reference.cr.width = STRIDE;
+            reference.cb.height = reference.cr.height = 1;
+            reference.y.data = planes + input_offset;
+            reference.cb.data = planes + 2 * STRIDE + input_offset;
+            reference.cr.data = planes + 3 * STRIDE + input_offset;
+            plm_frame_to_rgb(&reference, rgb, rounded * 3);
+            for (unsigned output_offset = 0; output_offset < 4; ++output_offset) {
+                memset(out, 0xa5, sizeof(out));
+                uint8_t *destination = out + 4 + output_offset;
+                mpeg_yuv420_rows_to_rgb565(reference.y.data, reference.y.data + STRIDE,
+                    reference.cb.data, reference.cr.data,
+                    destination, destination + OUT_STRIDE, width);
+                expect(rgb, destination, rounded);
+                expect(rgb + rounded * 3, destination + OUT_STRIDE, rounded);
+                for (unsigned i = 0; i < 4 + output_offset; ++i) CHECK(out[i] == 0xa5);
+                for (unsigned row = 0; row < 2; ++row)
+                    for (unsigned i = 2 * rounded; i < OUT_STRIDE; ++i)
+                        CHECK(destination[row * OUT_STRIDE + i] == 0xa5);
+            }
+        }
+    }
+}
+
+#ifdef __xcore__
+static void benchmark(void)
+{
+    enum { WIDTH = 320, FRAMES = 32, ROW_PAIRS = 120 };
+    static uint8_t planes[WIDTH * 3] __attribute__((aligned(8)));
+    static uint8_t output[WIDTH * 4] __attribute__((aligned(8)));
+    for (unsigned i = 0; i < sizeof(planes); ++i) planes[i] = (uint8_t)(i * 37 + 5);
+    unsigned start = get_reference_time();
+    for (unsigned frame = 0; frame < FRAMES; ++frame)
+        for (unsigned pair = 0; pair < ROW_PAIRS; ++pair)
+            mpeg_yuv420_rows_to_rgb565(planes, planes + WIDTH, planes + 2 * WIDTH,
+                planes + 2 * WIDTH + WIDTH / 2, output, output + WIDTH * 2, WIDTH);
+    unsigned ticks = get_reference_time() - start;
+    unsigned hash = 2166136261u;
+    for (unsigned i = 0; i < sizeof(output); ++i) hash = (hash ^ output[i]) * 16777619u;
+    printf("RGB565 benchmark: %u us/frame, %u frames, checksum=%08x (conversion only)\n",
+           ticks / (100 * FRAMES), FRAMES, hash);
+}
+#endif
+
 int main(void)
 {
+    setbuf(stdout, NULL);
+    puts("Checking RGB565 conversion against upstream PL_MPEG...");
     test_all_colours();
     test_frame();
-    puts("PASS: RGB565 conversion matches upstream PL_MPEG for all 16777216 colours and a padded frame");
+    test_widths_and_alignment();
+    puts("PASS: RGB565 conversion matches upstream PL_MPEG for all 16777216 colours, padded/odd frames and alignment/tail cases");
+#ifdef __xcore__
+    benchmark();
+#endif
     return 0;
 }

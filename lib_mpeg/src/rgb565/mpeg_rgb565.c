@@ -3,11 +3,91 @@
 #include "mpeg_rgb565.h"
 
 #if !defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error The packed RGB565 tables assume a little-endian target
+#error RGB565 word packing assumes a little-endian target
 #endif
 
+#ifndef MPEG_RGB565_VPU
+#define MPEG_RGB565_VPU 1
+#endif
+
+#if MPEG_RGB565_VPU && (defined(__XS3A__) || defined(MPEG_RGB565_VPU_EMULATE))
+#include "mpeg_rgb565_vpu.h"
+
+typedef uint32_t __attribute__((may_alias)) pixel32_t;
+
+/* ZIP duplicates each byte into its neighbouring byte. XOR recentres unsigned
+ * samples for the VPU's signed 8-bit widening multiply. Only eight chroma bytes
+ * are read per 16-pixel block; no padded input or out-of-bounds vector reads. */
+static void duplicate_chroma(uint32_t value, uint32_t *destination)
+{
+    uint32_t low, high;
+#if defined(__XS3A__)
+    low = high = value;
+    asm("zip %0, %1, 3" : "+&r"(high), "+&r"(low));
+#else
+    low = (value & 0xff) | ((value & 0xff) << 8) |
+          ((value & 0xff00) << 8) | ((value & 0xff00) << 16);
+    value >>= 16;
+    high = (value & 0xff) | ((value & 0xff) << 8) |
+           ((value & 0xff00) << 8) | ((value & 0xff00) << 16);
+#endif
+    destination[0] = low ^ 0x80808080u;
+    destination[1] = high ^ 0x80808080u;
+}
+
+static unsigned clamp_channel(int value)
+{
+    return value < 0 ? 0 : value > 255 ? 255 : (unsigned)value;
+}
+
+/* Small/tail/unaligned fallback without lookup tables. It preserves the public
+ * arbitrary-alignment and round-up-to-even-width contract on VPU builds. */
+static void scalar_pixel(uint8_t *out, unsigned sample, int r, int g, int b)
+{
+    int y = (((int)sample - 16) * 76309) >> 16;
+    unsigned pixel = ((clamp_channel(y + r) & 0xf8) << 8) |
+                     ((clamp_channel(y - g) & 0xfc) << 3) |
+                     (clamp_channel(y + b) >> 3);
+    out[0] = (uint8_t)(pixel >> 8);
+    out[1] = (uint8_t)pixel;
+}
+
+void mpeg_yuv420_rows_to_rgb565(const uint8_t *y0, const uint8_t *y1,
+                                const uint8_t *cb, const uint8_t *cr,
+                                uint8_t *out0, uint8_t *out1, unsigned width)
+{
+    unsigned x = 0;
+    if (!(((uintptr_t)y0 | (uintptr_t)y1 | (uintptr_t)cb | (uintptr_t)cr |
+           (uintptr_t)out0 | (uintptr_t)out1) & 3)) {
+        mpeg_rgb565_vpu_input_t samples = {{0}, {0}, {0}, {0}};
+        for (; width - x >= 16; x += 16) {
+            for (unsigned i = 0; i < 4; ++i) {
+                samples.y0[i] = *(const pixel32_t *)(y0 + x + 4 * i) ^ 0x80808080u;
+                samples.y1[i] = *(const pixel32_t *)(y1 + x + 4 * i) ^ 0x80808080u;
+            }
+            for (unsigned i = 0; i < 2; ++i) {
+                duplicate_chroma(*(const pixel32_t *)(cb + x / 2 + 4 * i), samples.cb + 2 * i);
+                duplicate_chroma(*(const pixel32_t *)(cr + x / 2 + 4 * i), samples.cr + 2 * i);
+            }
+            mpeg_rgb565_vpu_block(&samples, out0 + 2 * x, out1 + 2 * x);
+        }
+    }
+    for (; x < width; x += 2) {
+        int u = (int)cb[x / 2] - 128, v = (int)cr[x / 2] - 128;
+        int r = (v * 104597) >> 16;
+        int g = (u * 25674 + v * 53278) >> 16;
+        int b = (u * 132201) >> 16;
+        scalar_pixel(out0 + 2 * x, y0[x], r, g, b);
+        scalar_pixel(out0 + 2 * x + 2, y0[x + 1], r, g, b);
+        scalar_pixel(out1 + 2 * x, y1[x], r, g, b);
+        scalar_pixel(out1 + 2 * x + 2, y1[x + 1], r, g, b);
+    }
+}
+
+#else
+
 /* Match PL_MPEG's limited-range BT.601 scalar conversion:
- *   y = ((Y - 16) * 76309) >> 16,       range  -18..278
+ *   y = ((Y - 16) * 76309) >> 16,       range  -19..278
  *   r = (v * 104597) >> 16,             range -205..202
  *   g = (u * 25674 + v * 53278) >> 16,  range -155..153
  *   b = (u * 132201) >> 16,             range -259..256
@@ -16,7 +96,7 @@
  *
  * Luma scaling and each channel's clamp, RGB565 field placement and byte order
  * are tabulated, so a pixel costs one luma lookup, three channel lookups and
- * two ORs. Channel sums span -277..534; BIAS makes them indices. */
+ * two ORs. Channel sums span -278..534; BIAS makes them indices. */
 enum { BIAS = 288, CHANNEL_ENTRIES = 832 };
 static int16_t luma[256];
 static uint16_t red565[CHANNEL_ENTRIES], green565[CHANNEL_ENTRIES], blue565[CHANNEL_ENTRIES];
@@ -72,6 +152,8 @@ void mpeg_yuv420_rows_to_rgb565(const uint8_t *y0, const uint8_t *y1,
         }
     }
 }
+
+#endif
 
 void mpeg_frame_to_rgb565(const mpeg_frame_t *frame, uint8_t *destination, unsigned stride)
 {

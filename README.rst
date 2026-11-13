@@ -34,6 +34,8 @@ Features
 * Push-input API: the application owns storage I/O and feeds compressed bytes.
 * Fixed 384 KiB static decoder arena and 32 KiB compressed-input buffer; no heap use.
 * YUV 4:2:0 to RGB565 colour conversion for 16-bit displays.
+* Bit-exact XS3 VPU colour conversion, with a scalar build option and no extra
+  frame buffer.
 * Optional libmpeg2 backend for MPEG-2 evaluation, with a 400 KiB guarded arena.
 * Standalone XU316 benchmark examples for each backend with decode timing.
 * Native reference tests checked against unmodified upstream and FFmpeg output.
@@ -43,9 +45,11 @@ Features
 Known issues
 ************
 
-* No VPU acceleration or parallel decoding. Standalone decoder rates are
+* No VPU acceleration or parallelism within the decoder; the colour converter
+  is VPU-accelerated on XS3. Standalone decoder rates are
   simulator measurements; the separate USB/LCD player has been measured on
-  hardware at 18.23 FPS with about 36.9 ms/frame spent decoding. That is an
+  ILI9341 hardware at 22.33 FPS with about 29.3 ms/frame spent decoding, using
+  VPU conversion and early YUV acknowledgement. That is an
   integrated workload measurement, not a standalone decoder rate.
 * Video elementary streams (``.m1v``) only. Multiplexed ``.mpg`` program streams
   and MP2 audio are not supported.
