@@ -21,6 +21,9 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
     target_include_directories(mpeg_bench PRIVATE examples/app_plmpeg_benchmark/src)
     target_compile_definitions(mpeg_bench PRIVATE _POSIX_C_SOURCE=200809L)
     add_executable(mpeg_api_test tests/mpeg_api_test.c)
+    add_executable(mpeg_motion_test tests/motion_test.c)
+    target_include_directories(mpeg_motion_test PRIVATE third_party/pl_mpeg)
+    target_compile_options(mpeg_motion_test PRIVATE -O3 -fwrapv)
     # Desktop-only oracle, independent of our bounded allocator/feed adapter.
     # It is built from the untouched upstream checkout, never from the fork in
     # third_party/pl_mpeg, so the exact-output test cannot compare the fork
@@ -38,14 +41,15 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
     target_compile_options(mpeg_rgb565_test PRIVATE -O1 -fwrapv)
     target_link_libraries(mpeg_rgb565_test PRIVATE mpeg_scalar)
     set(decoder_target mpeg_scalar)
-    set(test_targets mpeg_bench mpeg_api_test plmpeg_upstream_ref mpeg_rgb565_test)
+    set(test_targets mpeg_bench mpeg_api_test plmpeg_upstream_ref mpeg_rgb565_test mpeg_motion_test)
     add_test(NAME mpeg_api COMMAND mpeg_api_test)
+    add_test(NAME mpeg_motion COMMAND mpeg_motion_test)
     add_test(NAME mpeg_rgb565 COMMAND mpeg_rgb565_test)
     add_test(NAME mpeg1_reference COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_plmpeg.py --bench $<TARGET_FILE:mpeg_bench>
         --api-test $<TARGET_FILE:mpeg_api_test> --upstream $<TARGET_FILE:plmpeg_upstream_ref>
         --work ${CMAKE_CURRENT_BINARY_DIR}/fixtures)
-    set_tests_properties(mpeg_api mpeg_rgb565 mpeg1_reference PROPERTIES
+    set_tests_properties(mpeg_api mpeg_motion mpeg_rgb565 mpeg1_reference PROPERTIES
         ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1" TIMEOUT 120)
 elseif(MPEG_BACKEND STREQUAL "libmpeg2")
     include(cmake/upstream.cmake)

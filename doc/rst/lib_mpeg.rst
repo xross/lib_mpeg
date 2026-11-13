@@ -175,11 +175,17 @@ upstream. The changes are all in ``pl_mpeg.h``:
   one bounds-checked call per bit, falling back to the original reads within 48
   bits of the end of the buffered data.
 * The IDCT skips columns and rows whose only non-zero coefficient is the first.
-* Motion compensation processes four pixels per 32-bit word.
+* Motion compensation processes four pixels per 32-bit word. Its rounded-average
+  helper evaluates each argument once, including load/extract expressions.
 * Block output uses row pointers and skips constant blocks that add zero.
 * On xcore only, motion compensation reads and writes aligned words directly,
   because unaligned word access traps. Frame memory must therefore be aligned
-  to four bytes, which the adapter's arena guarantees.
+  to four bytes, which the adapter's arena guarantees. Bidirectional destination
+  reads use the existing word alignment directly rather than the unaligned
+  source-word loader.
+  The original padded-word read contract is retained. There are no additional
+  image buffers, tables or VPU kernels. Half-pixel rounding and the separate
+  bidirectional rounding step remain unchanged.
 
 The first four are portable C, intended for submission upstream. xcore-only
 changes in the fork carry an ``xcore:`` prefix in their commit subject so that
@@ -371,6 +377,22 @@ The suite decodes 24-picture I/P and I/P/B clips with input refills of 1, 7,
 4093 and 4096 bytes, and covers repeated decode/reopen cycles, empty and invalid
 inputs, dimension and codec rejection, and capacity limits. Output is compared
 with a pristine upstream build and with FFmpeg; see `Correctness`_.
+
+``mpeg_motion_test`` additionally checks the fork's actual macroblock function
+against an independent per-pixel reference in 2128 cases. It covers 8- and
+16-pixel blocks, every source alignment, positive and negative integer/half-pixel
+motion, all interpolation modes and bidirectional averaging, using zero, 255,
+alternating and deterministic random data. The entire destination is checked,
+including bytes outside the written block. Build the same test for xcore to
+exercise the aligned-load/LEXTRACT implementation rather than the native
+memcpy path (XTC Tools active)::
+
+    cmake -G "Unix Makefiles" -S tests/app_motion -B build-motion-xcore
+    xmake -C build-motion-xcore -j 8
+    xrun --io build-motion-xcore/bin/test_mpeg_motion.xe
+
+This finite standalone test has no real-time USB/display tasks. JTAG output is
+used only for the final pass/fail report, not a throughput measurement.
 
 The optional MPEG-2 tests use a separate build directory::
 
