@@ -1,0 +1,6 @@
+[submodule "third_party/libmpeg2"]
+	path = third_party/libmpeg2
+	url = https://code.videolan.org/videolan/libmpeg2.git
+[submodule "third_party/pl_mpeg"]
+	path = third_party/pl_mpeg
+	url = https://github.com/phoboslab/pl_mpeg.git
