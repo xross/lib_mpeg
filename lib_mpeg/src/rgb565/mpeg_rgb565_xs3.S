@@ -1,4 +1,5 @@
-#if defined(__XS3A__) && (!defined(MPEG_RGB565_VPU) || MPEG_RGB565_VPU)
+#include "mpeg_config.h"
+#if defined(__XS3A__) && MPEG_RGB565_VPU
 
 /* Exact limited-range BT.601, 16 pixels in each of two rows. Coefficients are
  * decomposed to signed 16-bit multipliers without changing their Q16 values:

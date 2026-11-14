@@ -6,8 +6,7 @@ lib_mpeg: MPEG video decoding
 Introduction
 ************
 
-``lib_mpeg`` is an experimental MPEG video decoder integration for XCORE devices.
-It is a decoder bring-up and evaluation, not a complete media player.
+``lib_mpeg`` is an MPEG video decoder integration for XCORE devices.
 
 Two backends are available. Only one is compiled into a build:
 
@@ -27,9 +26,10 @@ Two backends are available. Only one is compiled into a build:
      - ``lib_mpeg/api/mpeg2.h``
      - GPL-2.0-or-later
 
-Both decoders are scalar C, without VPU kernels or parallel decoding; the
-separate RGB565 colour converter is VPU-accelerated on XS3. The two decoder
-interfaces are not interchangeable. The default backend exports a small
+Both decoders run on one thread. On XS3 the PL_MPEG backend's inverse DCT and
+the separate RGB565 colour converter use the vector unit (VPU); the rest of that
+decoder, and all of libmpeg2, is scalar C. The two decoder interfaces are not
+interchangeable. The default backend exports a small
 push-input API; the optional backend retains the upstream libmpeg2 API. A shared
 backend interface is deferred until real player requirements establish it.
 
@@ -37,25 +37,16 @@ The default build does not compile or link libmpeg2. The upstream sources and
 what has been changed in them are described under `Third-party decoders`_;
 licensing is described in ``LICENSE.rst``.
 
-Not included
-============
-
-Upstream PL_MPEG contains program-stream demuxing and MP2 audio decoding, but the
-adapter exposes and validates **video only**. It does not accept a multiplexed
-``.mpg`` file and provides no audio samples. Demuxing, audio, display or storage
-integration and playback pacing are left to the application.
-No audio/video synchronisation claim is made.
-
-***********************
+*******************
 The PL_MPEG adapter
-***********************
+*******************
 
 PL_MPEG is a single-header desktop library: by default it allocates from the
 heap, can read files through stdio, and grows its input buffer on demand. The
 *adapter* is the XMOS-written layer that makes it usable on xcore and implements
-the ``mpeg.h`` API. PL_MPEG itself is compiled from the ``third_party/pl_mpeg``
-submodule, a fork whose only changes are speed optimisations that leave its
-output identical to upstream; `Third-party decoders`_ lists them.
+the ``mpeg.h`` video API and the ``mpeg_audio.h`` MP2 audio API. PL_MPEG itself is compiled from the ``third_party/pl_mpeg``
+submodule, a fork whose changes are speed optimisations; `Third-party decoders`_
+lists them and says which ones alter decoded output.
 
 .. list-table:: Adapter source files (``lib_mpeg/src/pl_mpeg``)
    :header-rows: 1
@@ -64,10 +55,12 @@ output identical to upstream; `Third-party decoders`_ lists them.
      - Purpose
    * - ``mpeg_video.c``
      - Configures and includes ``pl_mpeg.h``; implements ``mpeg_open()``,
-       ``mpeg_feed()``, ``mpeg_next()`` and ``mpeg_close()``.
+       ``mpeg_feed()``, ``mpeg_next()``, ``mpeg_close()`` and ``mpeg_audio_*()``.
+       Video and audio share the translation unit because they use PL_MPEG's
+       private implementation types.
    * - ``mpeg_memory.c``, ``mpeg_memory.h``
-     - Static arena allocator used in place of the heap; implements
-       ``mpeg_memory_stats()``.
+     - Bounded allocator, used in place of the heap, over the memory the
+       application passes to each open call.
 
 The adapter does the following.
 
@@ -82,25 +75,31 @@ before the header is included:
 * ``PLM_MALLOC``, ``PLM_REALLOC`` and ``PLM_FREE`` are redirected to the arena
   allocator. Without these PL_MPEG would call ``malloc()``, ``realloc()`` and
   ``free()``.
+* ``PLM_VIDEO_IDCT`` selects the fork's inverse DCT. It is set from
+  ``MPEG_VIDEO_IDCT`` by ``mpeg_config.h``; see `Configuration`_.
 
-Replaces the heap with a static arena
-=====================================
+Replaces the heap with application memory
+=========================================
 
-Every PL_MPEG allocation is served from one static array of
-``MPEG_ARENA_CAPACITY`` (384 KiB). The allocator functions
-(``mpeg_memory_alloc()`` and related) are internal to the library; applications
-do not provide or call them.
+Every PL_MPEG allocation is served from the memory the application passes to
+``mpeg_open()`` or ``mpeg_audio_open()``. Each decoder has its own arena over
+that memory. The allocator functions (``mpeg_memory_alloc()`` and related) are
+internal to the library; applications do not provide or call them. PL_MPEG's
+allocation macros carry no context, so every adapter entry point first selects
+its arena for the calling logical core. A video and an audio decoder can
+therefore run on different tasks of one tile, or on different tiles.
 
 * Allocation is a simple bump allocator with 8-byte alignment and at most eight
-  live blocks, which is sufficient for one decoder. Space is reclaimed only when
+  live blocks per arena, which is sufficient for one decoder. Space is reclaimed only when
   every block has been freed, that is when the decoder is closed.
 * Each block is surrounded by 16 guard bytes. They are verified on every free and
-  reported by ``mpeg_memory_stats()``, which also gives peak and live usage.
+  reported by ``mpeg_memory_stats()`` and ``mpeg_audio_memory_stats()``, which
+  also give peak and live usage.
 * A resize request that would grow a block, an allocation that does not fit, a
   corrupted guard or an unknown pointer calls ``abort()``. PL_MPEG does not check
   allocation results, so failing fatally is safer than returning a null pointer
-  into it. The stream checks below exist to keep supported input away from
-  these paths.
+  into it. The open calls and the stream checks below return ``MPEG_CAPACITY``
+  for memory that is too small, to keep supported use away from these paths.
 
 Provides a push-input API
 =========================
@@ -125,26 +124,21 @@ adapter inspects the incoming bytes before PL_MPEG acts on them:
 * Decoding does not start until the first picture start code has been fed.
 * Each decoded picture must have the dimensions of the initial sequence header.
 
-A failed check returns ``MPEG_UNSUPPORTED``. Like ``MPEG_ERROR``, it is latched:
+A failed check returns ``MPEG_UNSUPPORTED``. A stream whose pictures do not fit
+in the memory passed to ``mpeg_open()`` returns ``MPEG_CAPACITY`` at the same
+point. Like ``MPEG_ERROR``, it is latched:
 every later call returns the same result until the decoder is closed. These
 checks bound memory use for supported streams; they are not a general
 malformed-stream validator.
 
-Corrects end-of-stream behaviour
-================================
+End of stream
+=============
 
-Two upstream behaviours are corrected in the adapter, not by patching PL_MPEG:
-
-* When the final coded picture is a B picture, PL_MPEG does not output the last
-  anchor picture. The adapter detects this state at end of input and returns
-  that picture once. See `Correctness`_.
-* PL_MPEG does not register end of input when it is signalled with no bytes
-  left in its buffer. The adapter sets the ended state directly, so a final
-  ``mpeg_feed()`` call with ``size`` zero is valid.
-
-Both rely on PL_MPEG internal state, so they must be re-verified whenever the
-submodule pin is changed. A stream that ends without producing any picture
-returns ``MPEG_ERROR``.
+A final ``mpeg_feed()`` call with ``size`` zero is valid and ends the stream.
+The last picture in display order is returned whatever its coded type. Upstream
+PL_MPEG gets both of these wrong; they are fixed in the fork, not worked around
+in the adapter. See `Third-party decoders`_. A stream that ends without
+producing any picture returns ``MPEG_ERROR``.
 
 **********************
 Third-party decoders
@@ -169,29 +163,64 @@ kept:
   tests compare the library with the original and not with itself. It is not
   part of any xcore build.
 
-The fork changes decoding speed only; its output must be identical to
-upstream. The changes are all in ``pl_mpeg.h``:
+The fork's commits are ordered so that each group can be taken without the
+ones after it: fixes, then portable optimisations, then xcore-only changes,
+whose commit subjects carry an ``xcore:`` prefix. All xcore-specific code is in
+the fork's ``xcore`` directory. ``pl_mpeg.h`` includes ``xcore/pl_mpeg_xcore.h``
+on xcore targets and otherwise only names the hooks that header may define, so
+the portable code has no xcore conditionals in it.
+
+Two fixes change behaviour at the end of a stream:
+
+* When the final coded picture is a B picture, upstream never returns the last
+  reference picture, which is displayed after it. The fork returns it.
+* Upstream does not register the end of input when it is signalled with nothing
+  left in the buffer. The fork does.
+
+The remaining changes affect decoding speed only. With the original transform
+selected (``MPEG_VIDEO_IDCT_PLMPEG``) every picture upstream produces must be
+identical, and these changes in ``pl_mpeg.h`` are always active:
 
 * DCT coefficients are decoded from a 32-bit window of the bitstream instead of
   one bounds-checked call per bit, falling back to the original reads within 48
-  bits of the end of the buffered data.
-* The IDCT skips columns and rows whose only non-zero coefficient is the first.
+  bits of the end of the buffered data. A 256-entry table resolves the first
+  eight bits of each coefficient code in one lookup.
+* The original IDCT skips columns and rows whose only non-zero coefficient is
+  the first.
 * Motion compensation processes four pixels per 32-bit word. Its rounded-average
   helper evaluates each argument once, including load/extract expressions.
-* Block output uses row pointers and skips constant blocks that add zero.
-* On xcore only, motion compensation reads and writes aligned words directly,
-  because unaligned word access traps. Frame memory must therefore be aligned
-  to four bytes, which the adapter's arena guarantees. Bidirectional destination
-  reads use the existing word alignment directly rather than the unaligned
-  source-word loader.
+* Block output uses row pointers, skips constant blocks that add zero, and
+  tests four pixels at once for clamping.
+* Start codes are found by scanning the buffered data directly instead of one
+  bounds-checked call per byte.
+* A platform header may replace word loads and stores, full-pixel block copies
+  and pixel stores. Without one the portable code is used.
+* On xcore, the platform header reads and writes aligned words directly,
+  because unaligned word access traps, building an unaligned source word from
+  two aligned ones with ``LEXTRACT``. Frame memory must therefore be aligned to
+  four bytes, which the adapter's arena guarantees. On XS3, aligned full-pixel
+  prediction is copied with vector loads and stores.
   The original padded-word read contract is retained. There are no additional
-  image buffers, tables or VPU kernels. Half-pixel rounding and the separate
-  bidirectional rounding step remain unchanged.
+  image buffers or tables. Half-pixel rounding and the separate bidirectional
+  rounding step remain unchanged.
 
-The first four are portable C, intended for submission upstream. xcore-only
-changes in the fork carry an ``xcore:`` prefix in their commit subject so that
-the portable ones can be picked out. No audio, demux or timestamp-arithmetic
-changes have been made.
+Three further changes are optional, selected by the macros described under
+`Configuration`_, and alter rounding:
+
+* A 16-bit inverse DCT (``pl_mpeg_idct.h``, ``xcore/pl_mpeg_idct_xs3.S``). It is
+  an orthonormal 8 x 8 transform with Q14 coefficients, computed as two passes
+  of eight-term dot products on the XS3 vector unit, with a portable C model
+  that gives the same bits. Coefficients are held as 16-bit values and transformed in
+  place, so no conversion to and from the original 32-bit block is needed. It
+  takes the same time for every block, where the original is faster on sparse
+  blocks. Decoded pictures differ slightly from upstream; see `Correctness`_.
+* The MP2 synthesis window accumulates with fused multiply-add
+  (``pl_mpeg_audio.h``), using ``fmacc`` on XS3 and C99 ``fmaf`` elsewhere.
+* MP2 PCM output is scaled by a reciprocal multiply instead of a divide.
+
+The fixes and the always-active portable changes are intended for submission
+upstream. No demux or timestamp-arithmetic changes have been made. The fork's ``tests`` directory
+holds host tests for the transform and the synthesis window.
 
 libmpeg2
 ========
@@ -240,14 +269,61 @@ The default backend is accessed through ``mpeg.h``:
 To select the optional backend, set ``MPEG_BACKEND`` to ``libmpeg2`` before the
 library is registered, or pass ``-DMPEG_BACKEND=libmpeg2`` when configuring.
 
+Configuration
+=============
+
+Options are compile-time macros whose defaults are in
+``lib_mpeg/api/mpeg_config.h``. To change one, define it in an ``mpeg_conf.h``
+header among the application's sources. XCommon CMake finds that header and the
+library includes it; options it does not define keep their defaults.
+
+.. code-block:: c
+
+    /* mpeg_conf.h: decode with the original PL_MPEG transform */
+    #define MPEG_VIDEO_IDCT MPEG_VIDEO_IDCT_PLMPEG
+
+.. list-table:: Options for the PL_MPEG backend
+   :header-rows: 1
+   :widths: 25 25 50
+
+   * - Option
+     - Default
+     - Effect
+   * - ``MPEG_VIDEO_IDCT``
+     - ``MPEG_VIDEO_IDCT_VPU16`` on XS3, ``MPEG_VIDEO_IDCT_SCALAR16`` elsewhere
+     - Inverse DCT of the video decoder. ``MPEG_VIDEO_IDCT_VPU16`` is a 16-bit
+       transform on the XS3 vector unit. ``MPEG_VIDEO_IDCT_SCALAR16`` is its
+       bit-identical C model, used so that host builds reproduce target output;
+       it is slower than the original and is not an optimisation.
+       ``MPEG_VIDEO_IDCT_PLMPEG`` is the original PL_MPEG transform, the only
+       one whose output is byte-identical to upstream.
+   * - ``MPEG_RGB565_VPU``
+     - 1
+     - 1 converts to RGB565 on the XS3 vector unit, 0 with scalar lookup tables.
+       The pixels are identical. Non-XS3 builds are always scalar.
+   * - ``MPEG_AUDIO_FAST_SCALE``
+     - 1
+     - 1 scales MP2 PCM output by a reciprocal multiply, 0 by the original
+       divide. Float rounding differs.
+   * - ``MPEG_AUDIO_FAST_WINDOW``
+     - 1
+     - 1 uses fused multiply-accumulate in the MP2 synthesis window, 0 the
+       original separate multiply and add. Float rounding differs.
+
+These are C preprocessor options, not CMake cache settings. Use ``mpeg_conf.h``
+for application configuration, or explicit compiler definitions in a dedicated
+test build. ``MPEG_BACKEND`` chooses which sources are built and remains a CMake
+setting. The fork source is always the pinned ``third_party/pl_mpeg`` submodule.
+
 ***
 API
 ***
 
-The default (PL_MPEG) API is declared in ``lib_mpeg/api/mpeg.h``. The
-application owns the decoder task and performs file or USB reads outside it:
+The default (PL_MPEG) video API is declared in ``lib_mpeg/api/mpeg.h``. The
+application owns the decoder task and the decoder's memory, and performs file or
+USB reads outside it:
 
-#. Call ``mpeg_open()``; expect ``MPEG_NEED_INPUT``.
+#. Call ``mpeg_open(memory, size)``; expect ``MPEG_NEED_INPUT``.
 #. Call ``mpeg_next(&frame)``.
 #. On ``MPEG_NEED_INPUT``, read at most ``mpeg_input_space()`` bytes and pass them
    to ``mpeg_feed(data, size, end_of_input)``. The input is copied, so the caller
@@ -261,10 +337,11 @@ application owns the decoder task and performs file or USB reads outside it:
 
 .. code-block:: c
 
+    static uint8_t memory[MPEG_VIDEO_MEMORY_SIZE] __attribute__((aligned(8)));
     mpeg_frame_t frame;
     int eof = 0;
 
-    mpeg_open();
+    mpeg_open(memory, sizeof(memory));
     for (;;) {
         mpeg_result_t result = mpeg_next(&frame);
         if (result == MPEG_NEED_INPUT) {
@@ -295,15 +372,62 @@ a complete malformed-stream validator, so only trusted input should be decoded.
 Memory model
 ============
 
-All decoder allocations come from a static arena of ``MPEG_ARENA_CAPACITY``
-(384 KiB), including the three YUV420 pictures and the ``MPEG_INPUT_CAPACITY``
-(32 KiB) compressed buffer. There is no heap fallback and no mid-stream buffer
-growth. Unexpected upstream allocation requests abort instead of returning a
-null pointer into upstream code, which does not consistently check for it.
-``mpeg_memory_stats()`` reports the arena peak, live usage and guard status.
+The application supplies the decoder's memory to ``mpeg_open()``: a buffer
+aligned to eight bytes that it does not touch until ``mpeg_close()``. Declaring
+it as a static array keeps its size in the build's memory report for the tile.
+All decoder allocations come from it, including the three YUV420 pictures and
+the ``MPEG_INPUT_CAPACITY`` (32 KiB) compressed buffer.
 
-Only one decoder can be open per tile. Picture pointers are tile-local and
+``MPEG_VIDEO_MEMORY_SIZE`` (384 KiB) is enough for any supported stream. A
+player for smaller pictures can pass less: three pictures of 1.5 bytes per luma
+sample, with width and height rounded up to multiples of 16, plus the input
+buffer and about 2 KiB. For 160 x 120 that is about 124 KiB. ``mpeg_open()``
+returns ``MPEG_CAPACITY`` if the memory cannot hold the decoder itself, and
+``mpeg_feed()`` returns it if the stream's pictures do not fit.
+
+There is no heap fallback and no mid-stream buffer growth. Unexpected upstream
+allocation requests abort instead of returning a null pointer into upstream
+code, which does not consistently check for it. ``mpeg_memory_stats()`` reports
+the peak, live usage, capacity and guard status.
+
+Only one video decoder can be open per tile. Picture pointers are tile-local and
 read-only; do not pass them to another tile as if they were shared memory.
+
+MP2 audio
+=========
+
+``mpeg_audio.h`` decodes MPEG-1 Audio Layer II using PL_MPEG's audio decoder. It
+follows the same pattern as video, with its own memory, and is independent of
+the video decoder: it may run on another task or another tile.
+
+.. code-block:: c
+
+    static uint8_t memory[MPEG_AUDIO_MEMORY_SIZE] __attribute__((aligned(8)));
+    mpeg_audio_frame_t frame;
+
+    mpeg_audio_open(memory, sizeof(memory));
+    while ((n = read_audio(buffer, sizeof(buffer))) != 0) {
+        mpeg_audio_feed(buffer, n);    /* n <= mpeg_audio_input_space() */
+        while (mpeg_audio_next(&frame) == MPEG_FRAME)
+            play(frame.samples, MPEG_AUDIO_FRAME_SAMPLES, frame.sample_rate);
+    }
+    if (mpeg_audio_finish() != MPEG_END) { /* failed or truncated */ }
+    mpeg_audio_close();
+
+* Input is an MP2 elementary stream starting on a frame header. The application
+  demultiplexes ``.mpg`` program streams itself; the ``lib_xuh`` ``app_xuh_msc``
+  example contains a reader that does.
+* Each frame is ``MPEG_AUDIO_FRAME_SAMPLES`` (1152) interleaved left/right pairs
+  of ``float`` in the range -1 to 1, valid until the next call. A mono stream is
+  given on both channels.
+* ``mpeg_audio_next()`` returns ``MPEG_NEED_INPUT`` until a whole frame is
+  buffered. At most ``MPEG_AUDIO_INPUT_CAPACITY`` (4 KiB) is buffered, and
+  ``MPEG_AUDIO_MEMORY_SIZE`` (28 KiB) of memory is required.
+* Free-format, Layer I, Layer III and MPEG-2 audio are rejected. There is no
+  resynchronisation: a damaged frame or a change of format is a terminal
+  ``MPEG_ERROR``.
+* One audio decoder can be open per tile. No output, pacing or audio/video
+  synchronisation is provided.
 
 Colour conversion to RGB565
 ===========================
@@ -346,7 +470,7 @@ packed directly into high-byte-first output using raw accumulator low halves.
 The exhaustive hardware test checks that SIMD lane order, byte duplication,
 rounding and packing agree with unmodified upstream PL_MPEG for every colour.
 
-Configure an XCommon CMake application with ``-DMPEG_RGB565_VPU=OFF`` to retain
+Define ``MPEG_RGB565_VPU`` as 0 in ``mpeg_conf.h`` to select
 the original tabulated scalar converter. Non-XS3 and native builds also use that
 implementation. It allocates 5504 bytes of lookup arrays and a readiness flag;
 its first call must run from one task. The native test suite additionally builds
@@ -360,25 +484,10 @@ Input staging is included and the aligned full-width path is timed; channel
 reception, decoding and physical SPI are not. The test prints only outside the
 timed section, using JTAG I/O; these are not full-player FPS measurements.
 
-A matched ILI9341 ``lib_xuh`` player run, with the decoder unchanged between
-the two builds, measured 20.20 FPS scalar versus 21.87 FPS VPU, an 8.3% increase.
-Second-play conversion means were 12.369 ms versus 5.740 ms; receive stayed at
-1.245 ms and decode at 30.581 ms. Both builds completed two 3025-frame plays with
-zero errors. Tile-0 code/data/stack usage fell from 335616 to 331836 bytes, saving
-3780 bytes; tile 1 was unchanged. Decoder and LCD backpressure limit the overall
-gain, so the converter speedup must not be presented as the full-player speedup.
-
-Separate follow-up measurements kept the VPU converter unchanged: early YUV
-acknowledgement in the player reached 22.05 FPS; adding only single-evaluation
-motion-compensation averaging and aligned xcore destination reads reached
-**22.33 FPS**. Each build completed two full 3025-frame plays with zero errors.
-Tile-1 decode time fell from 30.581 to 29.344 ms/frame, while tile-0 conversion
-and 41.859 ms/frame SPI output stayed unchanged. The retained scalar decoder
-change saves 88 bytes on tile 1 relative to ACK-only. An attempted source-load
-reuse/alignment-hoisting loop was bit-exact but regressed to 21.86 FPS and was
-removed. These are integrated player results, not standalone kernel timings or
-additional converter speedups; full tile-labelled stages and memory totals are
-recorded in ``lib_xuh/examples/app_xuh_msc/doc/rst/pipeline.rst``.
+In the default XU316 USB/LCD player workload, VPU conversion takes about
+5.765 ms/frame. Channel reception, decoding and LCD output have separate timing
+scopes and overlap; a converter speedup is not an equal full-player speedup.
+See `Performance`_ for the current integrated workload and its limitations.
 
 Run the same exhaustive test and conversion benchmark on hardware::
 
@@ -411,14 +520,6 @@ plus upstream lookahead exceeds the 32 KiB input bound, reduce quality or bitrat
 Building and tests
 ******************
 
-Requirements
-============
-
-* XMOS XTC Tools 15.3.1 with XCommon CMake, and CMake 3.21 or later.
-* For native tests: a C99 compiler with sanitizer support, Python 3 and FFmpeg on
-  the path.
-* Optionally, ``requirements-dev.txt`` for checking the RST documents.
-
 Native tests
 ============
 
@@ -426,7 +527,7 @@ From the repository root, the default PL_MPEG build and tests are::
 
     python3 -m venv .venv
     source .venv/bin/activate
-    cmake -S . -B build-plmpeg-native -DCMAKE_BUILD_TYPE=Release
+    cmake -S tests -B build-plmpeg-native
     cmake --build build-plmpeg-native -j 8
     ctest --test-dir build-plmpeg-native --output-on-failure
 
@@ -435,12 +536,32 @@ The suite decodes 24-picture I/P and I/P/B clips with input refills of 1, 7,
 inputs, dimension and codec rejection, and capacity limits. Output is compared
 with a pristine upstream build and with FFmpeg; see `Correctness`_.
 
+Host builds decode with ``MPEG_VIDEO_IDCT_SCALAR16``, the model of the target's
+transform, so the suite checks the arithmetic the target runs. Configure a
+separate build directory with ``-DMPEG_TEST_ORIGINAL_IDCT=ON`` to run the same suite
+on the original transform, where output must match upstream byte for byte.
+
+``plmpeg_idct_test`` and ``plmpeg_window_test`` come from the fork. The first
+checks the transform the decoder calls against the exact transform (maximum
+error 1) on single-coefficient, extreme and random blocks, with canaries around
+the block; the second checks the fused synthesis window against the original
+loops for every history phase. Build the transform test for xcore to check the
+vector implementation against the C model bit for bit and to time it against
+the original (XTC Tools active)::
+
+    cmake -G "Unix Makefiles" -S tests/app_idct -B build-idct-xcore
+    xmake -C build-idct-xcore -j 8
+    xsim build-idct-xcore/bin/vpu16/test_mpeg_idct_vpu16.xe
+    xsim build-idct-xcore/bin/plmpeg/test_mpeg_idct_plmpeg.xe
+
 ``mpeg_motion_test`` additionally checks the fork's actual macroblock function
 against an independent per-pixel reference in 2128 cases. It covers 8- and
 16-pixel blocks, every source alignment, positive and negative integer/half-pixel
 motion, all interpolation modes and bidirectional averaging, using zero, 255,
 alternating and deterministic random data. The entire destination is checked,
-including bytes outside the written block. Build the same test for xcore to
+including bytes outside the written block. ``mpeg_api_test`` also covers the
+MP2 API: rejected headers and formats, truncation, bounded feeds, and memory
+that is null, misaligned or too small for either decoder. Build the motion test for xcore to
 exercise the aligned-load/LEXTRACT implementation rather than the native
 memcpy path (XTC Tools active)::
 
@@ -453,7 +574,7 @@ used only for the final pass/fail report, not a throughput measurement.
 
 The optional MPEG-2 tests use a separate build directory::
 
-    cmake -S . -B build-libmpeg2-native -DMPEG_BACKEND=libmpeg2
+    cmake -S tests -B build-libmpeg2-native -DMPEG_BACKEND=libmpeg2
     cmake --build build-libmpeg2-native -j 8
     ctest --test-dir build-libmpeg2-native --output-on-failure
 
@@ -483,7 +604,10 @@ outside the timed decoder calls and is not a storage validation.
 
 To run on hardware::
 
-    xrun --xscope --xscope-io-only build-plmpeg-xu316/bin/app_plmpeg_benchmark.xe
+    xrun --xscope build-plmpeg-xu316/bin/app_plmpeg_benchmark.xe
+
+Unlike the USB player, this benchmark needs host-file syscalls serviced as well
+as terminal output. Do not add ``--xscope-io-only`` to this host-file run.
 
 For a small checked simulator smoke test, generate the deterministic clip and
 run it through ``tests/run_xsim.py``::
@@ -494,11 +618,13 @@ run it through ``tests/run_xsim.py``::
       -f mpeg1video build-plmpeg-native/fixtures/VIDEO.M1V
     .venv/bin/python tests/run_xsim.py \
       --xe build-plmpeg-xu316/bin/app_plmpeg_benchmark.xe \
-      --work build-plmpeg-native/fixtures --frames 6 --hash a24768f4
+      --work build-plmpeg-native/fixtures --frames 6 --hash 9bdf6ed3
 
 The runner bounds xsim to 600000000 cycles and a 180 s process timeout. Success
 requires normal completion, the expected picture count and hash, and
-``status=OK``. Reaching either bound is a failure, not a result.
+``status=OK``. The hash is that of the default transform and equals the native
+build's; with the original transform selected in ``mpeg_conf.h`` it is
+``a24768f4``. Reaching either bound is a failure, not a result.
 
 Timing uses a hardware timer at the target's default 100 MHz reference clock,
 accumulated into 64-bit nanoseconds outside the decoder call. Each timed call
@@ -530,62 +656,20 @@ Resource usage
 Memory
 ======
 
-The standalone XU316 examples built with XTC 15.3.1 and the default selective
-optimisation profile report:
+Each XU316 tile has 524288 bytes (512 KiB) of SRAM. The application supplies
+384 KiB for maximum-resolution PL_MPEG video, including its 32-KiB compressed
+input buffer, and 28 KiB for MP2 audio. Smaller supported pictures can use less
+video memory; query the allocator's peak and guard status for the actual input.
+The optional libmpeg2 backend has a separate 400-KiB guarded arena.
 
-.. list-table:: Tile-1 memory, including the provisional stack reservation (bytes)
-   :header-rows: 1
-
-   * - Backend
-     - Code
-     - Data
-     - Stack
-     - Total
-     - Remaining
-   * - PL_MPEG
-     - 29718
-     - 401906
-     - 16532
-     - 448156
-     - 76132
-   * - libmpeg2
-     - 63546
-     - 427606
-     - 16532
-     - 507684
-     - 16604
-
-Each tile has 524288 bytes (512 KiB) of SRAM. Tile 0 holds about 4052 bytes of
-startup and runtime state and no decoder code or data. The libmpeg2 figures are
-for a build with ``MPEG_BENCH_ALLOW_MPEG1=ON``.
-
-These are standalone fits, not proof that USB, audio and display work can be
-added on the same tile. In particular there is not room for a full RGB888
-framebuffer alongside the decoder; prefer converting YUV420 to RGB565 in strips
-when integrating display output.
-
-The PL_MPEG arena peaked at 379360 bytes, including allocation guards, of its
-393216-byte capacity in native tests and at 379288 bytes on xcore. The libmpeg2
-arena peaked at 397888 bytes of 409600.
-
-Compared with an all-``-O3`` build of the same sources, selective optimisation
-saves a modest amount of code and no picture-buffer memory:
-
-.. list-table:: Tile-1 footprint by optimisation profile (bytes)
-   :header-rows: 1
-
-   * - Backend
-     - All -O3
-     - Selective -Os/-O3
-     - Saving
-   * - PL_MPEG
-     - 449316
-     - 448156
-     - 1160
-   * - libmpeg2
-     - 511556
-     - 507684
-     - 3872
+Code, other application buffers and all task stacks must fit alongside those
+arenas. Do not budget a full RGB888 framebuffer beside a 320 x 240 decoder on
+one tile; convert YUV420 to RGB565 in strips on the display tile instead.
+The default USB/LCD player uses 332516 bytes on tile 0 and 482188 bytes on tile 1,
+including its provisional stack reservation, with a video arena peak of 379176
+bytes. These application-specific totals are not the library's standalone
+footprint or a budget for arbitrary extra tasks. Inspect the linker's ``-report``
+output whenever changing features, buffers, targets or compiler settings.
 
 Stack
 =====
@@ -603,21 +687,100 @@ before production use.
 Performance
 ***********
 
-All figures below are from the xsim simulator for 320 x 240 streams, with one
-decoder task on tile 1 of ``XK-EVK-XU316`` and no USB, display or audio tasks
-running. They were measured before the PL_MPEG fork's speed optimisations, and
-on short synthetic clips; they have not been re-measured since. This library's
-own benchmarks have not been run on hardware.
+Performance depends on picture content, input delivery, display backpressure
+and the other tasks on each tile. Kernel timings, standalone decoder timings
+and completed-player FPS measure different work and are not interchangeable.
+The library requests dual issue explicitly for its decoder sources so an
+application's ``-mno-dual-issue`` does not silently disable it there.
 
-End-to-end playback has been measured on hardware in the ``lib_xuh``
-``app_xuh_msc`` example (USB storage to an SPI LCD): 18.23 FPS on a 3025-frame,
-320 x 240 file, with a mean decode time of 36.9 ms a frame. On that real content
-the fork's optimisations reduced decode time from 40.6 ms. An application built
-with ``-mno-dual-issue`` would otherwise pass that flag on to the decoder (49.4
-ms a frame in the same test), so the library requests dual issue explicitly.
+Inverse DCT
+===========
 
-Matched comparison
-==================
+``tests/app_idct`` checks the transform the decoder calls against its scalar
+model, with basis/extreme/random blocks, padding and canaries. It also times
+dense dequantized blocks and blocks with four low-frequency coefficients set.
+On XU316 hardware at 600 MHz, using XTC Tools 15.3.1:
+
+.. list-table:: Transform time per 8 x 8 block (hardware)
+   :header-rows: 1
+
+   * - ``MPEG_VIDEO_IDCT``
+     - Dense
+     - Sparse
+   * - ``MPEG_VIDEO_IDCT_PLMPEG``
+     - 13.274 us
+     - 10.774 us
+   * - ``MPEG_VIDEO_IDCT_VPU16``
+     - 2.558 us
+     - 2.558 us
+
+These are single-task kernel timings, with JTAG logging outside the timed
+sections, not decoder or player frame rates. Build and run the finite test
+with XTC Tools active::
+
+    cmake -G "Unix Makefiles" -S tests/app_idct -B build-idct-validation-hardware
+    xmake -C build-idct-validation-hardware -j 8
+    xrun --adapter-id SERIAL --io \
+      build-idct-validation-hardware/bin/vpu16/test_mpeg_idct_vpu16.xe
+    xrun --adapter-id SERIAL --io \
+      build-idct-validation-hardware/bin/plmpeg/test_mpeg_idct_plmpeg.xe
+
+USB/LCD integration
+===================
+
+The default decoder in ``lib_xuh/examples/app_xuh_msc`` runs a 3025-picture,
+320 x 240 reference clip at **30.37 FPS**, with mean decode time **22.899 ms/frame**.
+The workload uses XU316 at 600 MHz, XTC Tools 15.3.1, ILI9341 at 50 MHz SPI,
+VPU IDCT and RGB565 conversion, read-ahead/multi-sector storage reads, early YUV
+acknowledgement, FPS overlay and activity LED. Audio and timing histograms are
+disabled. This is one integrated workload, not a standalone decoder rate or a
+guaranteed worst-case 30-FPS capability.
+
+For this clip the default transform's Y/Cb/Cr PSNR against FFmpeg is
+55.59/62.00/63.63 dB, with maximum sample errors 5/3/3. The transform intentionally
+changes rounding; it is not byte-identical to the original PL_MPEG transform.
+Instrumented decode p95/p99 upper bounds are 35/40 ms, with an observed maximum
+of 49.711 ms. The decoder task's input/feed/decode/handoff service-period p95/p99
+bounds are 44/50 ms, with an observed maximum of 60.176 ms. Of 3024 service
+periods, 457 exceed 40 ms. These are unpaced YUV-handoff intervals, not physical
+LCD timestamps or missed presentation-deadline counts.
+
+The application's ``doc/rst/pipeline.rst`` documents its input formats, build
+configurations, ownership protocol, stage timings and physical display wiring.
+The cross-tile checksum-renderer fixture tests picture hashes, ownership,
+EOF/repeat and error recovery without modelling physical USB or LCD throughput.
+
+Codec and USB/LCD validation
+============================
+
+All native decoder checks are part of the ``tests`` CMake project; none needs
+``lib_xuh`` or another application checkout. Generated elementary-stream fixtures
+are the default. For full-content validation, set ``MPEG_TEST_VIDEO_STREAM`` to
+an MPEG-1 elementary video file and ``MPEG_TEST_AUDIO_STREAM`` to an elementary
+MP2 audio file when configuring the same native test build.
+
+The MP2 reference check compares baseline PCM bit for bit with pristine
+upstream and bounds the reciprocal-scale/fused-window variants to a peak
+difference of 1e-6 and an SNR of at least 120 dB. It feeds raw MP2 directly into
+``mpeg_audio_*()`` and checks refill boundaries, replay, malformed headers and
+truncation. PS demultiplexing is application-owned and is not part of these
+codec tests. The video comparator checks
+sample counts, per-plane error, PSNR and first/final windows against pristine
+PL_MPEG and FFmpeg. Target kernel tests check vector execution against the scalar
+model; native models alone do not validate hardware instructions.
+
+``tests/usb_lcd`` contains only end-to-end hardware integration tools for the
+external USB-storage/LCD application, not another decoder or native test project.
+``tests/usb_lcd/compare_mpeg_idct.py --help`` describes the two-build USB/LCD
+comparison. It validates complete reports, frame/byte counts, EOF status and
+arena cleanup, records input/executable hashes and compares completed plays
+after startup. It reuses ``tests/usb_lcd/run_hardware.py``, which also provides a bounded smoke
+runner for the video/MP2 player. Hardware comparisons require an idle XTAG and
+the appropriate input already on the USB stick; neither runner writes flash or
+USB media. Use xSCOPE for the real player, not JTAG logging.
+
+Standalone backend comparison
+=============================
 
 ``tests/matched_benchmark.py`` generates one 320 x 240, 25 FPS YUV420
 ``testsrc2`` source and encodes it as MPEG-1 and MPEG-2 with one encoding
@@ -638,31 +801,12 @@ are excluded. Each case must match FFmpeg output for its bitstream to at least
 45 dB PSNR with a maximum sample error of 16, and the xsim run must reproduce
 the native frame count and hash.
 
-.. list-table:: Matched three-picture I/P/B comparison (xsim FPS, including feed work)
-   :header-rows: 1
-
-   * - Decoder / input
-     - All -O3
-     - Selective -Os/-O3
-   * - PL_MPEG / MPEG-1
-     - 35.40
-     - 35.52
-   * - libmpeg2 / identical MPEG-1
-     - 53.82
-     - 53.79
-   * - libmpeg2 / matched MPEG-2
-     - 52.36
-     - 52.10
-
-All cases passed their checks. The difference between optimisation profiles is
-below 0.5% on this short fixture.
-
-To reproduce, build uninstrumented native reference executables::
+Build uninstrumented native reference executables::
 
     source .venv/bin/activate
-    cmake -S . -B build-space-pl-native -DMPEG_SANITIZE=OFF -DCMAKE_BUILD_TYPE=Release
+    cmake -S tests -B build-space-pl-native -DMPEG_SANITIZE=OFF -DCMAKE_BUILD_TYPE=Release
     cmake --build build-space-pl-native -j 8
-    cmake -S . -B build-space-lib-native -DMPEG_BACKEND=libmpeg2 \
+    cmake -S tests -B build-space-lib-native -DMPEG_BACKEND=libmpeg2 \
       -DMPEG_SANITIZE=OFF -DMPEG_BENCH_ALLOW_MPEG1=ON -DCMAKE_BUILD_TYPE=Release
     cmake --build build-space-lib-native -j 8
 
@@ -679,44 +823,11 @@ For the target comparison, build both examples in separate directories, passing
 ``--libmpeg2-xe <lib-build>/bin/app_mpeg2_benchmark.xe`` to the command. Use
 ``-DMPEG_SPACE_OPTIMIZE=OFF`` builds for the all-``-O3`` column.
 
-Each xsim case is bounded to 600000000 cycles and 180 host seconds. The default
-six-picture comparison reached that timeout when both profiles were run
-concurrently, so run profiles serially and use ``--frames 3``, which keeps I/P/B
-coverage. A timed-out case is reported as ``xsim_status=TIMEOUT`` and has no
-valid target rate.
-
-Decode-only results
-===================
-
-Earlier runs measured decoder calls only, excluding feed copies. They are not
-comparable with the matched ``codec_ns`` figures above or with each other, since
-they use different streams.
-
-.. list-table:: Decode-only xsim results
-   :header-rows: 1
-
-   * - Backend
-     - Fixture
-     - Decoder time
-     - Rate
-     - Output hash
-   * - PL_MPEG
-     - 6 pictures, MPEG-1
-     - 155.868 ms
-     - 38.49 FPS
-     - ``a24768f4``
-   * - libmpeg2
-     - 24 pictures, MPEG-2
-     - 349.222 ms
-     - 68.72 FPS
-     - ``42c7355d``
-
-Both fixtures are ``testsrc2`` encoded at 25 FPS with ``-g 12 -bf 2 -q:v 6``,
-and both hashes match native output. The PL_MPEG run was made before selective
-optimisation; its worst ``mpeg_next()`` call took 35.057 ms. The libmpeg2 mean
-I/P/B decode times were 32.742/13.143/11.431 ms. The libmpeg2 run predates the
-explicit stack reservation and should be repeated before being treated as a
-baseline.
+Each xsim case is bounded to 600000000 cycles and 180 host seconds. Run profiles
+serially; ``--frames 3`` retains I/P/B coverage with a smaller simulation load.
+A timed-out case is reported as ``xsim_status=TIMEOUT`` and has no valid target
+rate. Simulator wall time is not target time, and short synthetic decoder rates
+are not a prediction of integrated playback performance.
 
 ***********
 Correctness
@@ -726,19 +837,42 @@ PL_MPEG
 =======
 
 The adapter and the PL_MPEG fork it compiles are tested together against a
-native build of unmodified upstream PL_MPEG (``third_party/pl_mpeg_upstream``),
-and must match it byte for byte, with one deliberate difference. At the pinned commit, upstream omits the last delayed
-anchor picture when the final coded picture is a B picture. The adapter detects
-that end-of-stream state and releases the pending picture exactly once. This
-reads PL_MPEG private state and is done in the adapter, not in the fork.
-Regression tests require all 24 pictures, including the extra final one, for
-every refill size and across 30 repeat decodes of each fixture.
+native build of unmodified upstream PL_MPEG (``third_party/pl_mpeg_upstream``).
 
-PL_MPEG is not bit-exact with FFmpeg's integer reconstruction. The 24-picture
-fixtures achieved 54.96 dB PSNR (maximum sample error 12) for I/P and 55.80 dB
-(maximum error 7) with B pictures. Tests require at least 45 dB and a maximum
-error of 16. These bounds describe the test fixtures, not a general conformance
-guarantee.
+With ``MPEG_VIDEO_IDCT_PLMPEG`` the output must match upstream byte for byte,
+with one deliberate difference. Upstream omits the last reference picture when
+the final coded picture is a B picture, which the fork fixes. Regression tests
+require all 24 pictures, including the extra final one, for every refill size
+and across 30 repeat decodes of each fixture, and compare every picture
+upstream does produce.
+
+With the default 16-bit transform the same tests run, but pictures are not
+byte-identical to upstream because the transform rounds differently. They must
+instead stay within a mean squared error of 1 and a maximum sample error of 16
+of upstream. The xcore vector transform is tested bit for bit against the C
+model that host builds decode with, and the xsim smoke test requires the
+target's output hash to equal the host's.
+
+Neither transform is bit-exact with FFmpeg's integer reconstruction, so FFmpeg
+is used as an independent quality bound:
+
+.. list-table:: 24-picture fixtures against FFmpeg
+   :header-rows: 1
+
+   * - ``MPEG_VIDEO_IDCT``
+     - I/P
+     - I/P/B
+     - Required
+   * - ``MPEG_VIDEO_IDCT_SCALAR16`` / ``_VPU16``
+     - 57.75 dB, maximum error 4
+     - 58.26 dB, maximum error 4
+     - 50 dB, maximum error 8
+   * - ``MPEG_VIDEO_IDCT_PLMPEG``
+     - 54.96 dB, maximum error 12
+     - 55.80 dB, maximum error 7
+     - 45 dB, maximum error 16
+
+These bounds describe the test fixtures, not a general conformance guarantee.
 
 PL_MPEG keeps its upstream double-precision timestamp bookkeeping; no
 floating-point to fixed-point changes have been made.
@@ -750,9 +884,3 @@ The native MPEG-2 tests compare against FFmpeg independently, with approximately
 70 dB observed PSNR and a maximum sample error of four. The compressed chunk
 buffer is bounded to 32768 bytes by a single checked build-time source
 transformation, described under `Third-party decoders`_.
-
-Other decoders evaluated
-========================
-
-TinyMPG was evaluated and rejected: its P-picture reconstruction failed the
-FFmpeg correctness gate. It is not a backend or dependency of this library.
