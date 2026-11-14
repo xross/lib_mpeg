@@ -340,6 +340,11 @@ USB reads outside it:
    ``mpeg_close()``.
 #. To replay or change streams, close and open a fresh decoder.
 
+Each returned ``mpeg_frame_t`` includes ``frame_rate_num`` and ``frame_rate_den``:
+the exact nominal frame rate from the sequence header (for example 30000/1001),
+not decoder throughput. Both fields are valid on ``MPEG_FRAME``. All eight
+MPEG-1 frame-rate codes are supported; reserved codes are rejected.
+
 .. code-block:: c
 
     static uint8_t memory[MPEG_VIDEO_MEMORY_SIZE] __attribute__((aligned(8)));
