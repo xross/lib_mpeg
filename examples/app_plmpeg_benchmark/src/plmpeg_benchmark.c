@@ -23,6 +23,7 @@ static uint64_t elapsed(bench_time_t start) { return now() - start; }
 #include "plmpeg_benchmark.h"
 
 static uint8_t input[4096];
+static uint8_t memory[MPEG_VIDEO_MEMORY_SIZE] __attribute__((aligned(8)));
 static int output_frame(FILE *output, const mpeg_frame_t *frame, uint32_t *hash)
 {
     for (unsigned p = 0; p < 3; ++p) {
@@ -44,7 +45,7 @@ int plmpeg_benchmark(const char *input_path, const char *output_path, unsigned r
     if (!file) { fprintf(stderr, "Cannot open %s\n", input_path); return 1; }
     FILE *output = output_path ? fopen(output_path, "wb") : NULL;
     if (output_path && !output) { fclose(file); return 1; }
-    if (mpeg_open() != MPEG_NEED_INPUT) { fclose(file); if (output) fclose(output); return 1; }
+    if (mpeg_open(memory, sizeof(memory)) != MPEG_NEED_INPUT) { fclose(file); if (output) fclose(output); return 1; }
 #ifdef __xcore__
     timer = hwtimer_alloc();
     if (!timer) { mpeg_close(); fclose(file); if (output) fclose(output); return 1; }

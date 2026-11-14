@@ -8,12 +8,18 @@
 extern "C" {
 #endif
 
-/* Experimental PL_MPEG video adapter. One decoder on one task per tile;
- * no heap allocation and no callbacks. Not yet a cross-backend ABI.
+/* Experimental PL_MPEG video adapter. One video decoder per tile, driven from
+ * one task; no heap allocation and no callbacks. Not yet a cross-backend ABI.
  * Only fixed-resolution MPEG-1 elementary streams are accepted, not .mpg.
- * The optional libmpeg2 backend retains its separate mpeg2.h API. */
+ * MP2 audio is declared in mpeg_audio.h. The optional libmpeg2 backend retains
+ * its separate mpeg2.h API.
+ *
+ * The application owns the decoder's memory and passes it to mpeg_open().
+ * MPEG_VIDEO_MEMORY_SIZE is enough for any supported stream; a smaller picture
+ * needs less (about 4.5 bytes per luma sample of the picture rounded up to
+ * whole macroblocks, plus the input buffer and 2 KiB). */
 enum { MPEG_MAX_WIDTH = 320, MPEG_MAX_HEIGHT = 240,
-       MPEG_INPUT_CAPACITY = 32768, MPEG_ARENA_CAPACITY = 384 * 1024 };
+       MPEG_INPUT_CAPACITY = 32768, MPEG_VIDEO_MEMORY_SIZE = 384 * 1024 };
 typedef enum {
     MPEG_ERROR = -1, MPEG_UNSUPPORTED = -2, MPEG_CAPACITY = -3,
     MPEG_NEED_INPUT = 0, MPEG_FRAME = 1, MPEG_END = 2
@@ -27,8 +33,12 @@ typedef struct {
 } mpeg_frame_t;
 typedef struct { size_t peak, live, capacity; int guards_ok; } mpeg_memory_stats_t;
 
-/* Open/reset an empty decoder. A second open without close is an error. */
-mpeg_result_t mpeg_open(void);
+/* Open/reset an empty decoder using size bytes at memory, which must be
+ * aligned to eight bytes and stay untouched by the application until
+ * mpeg_close(). A second open without close, or null or misaligned memory, is
+ * MPEG_ERROR. Memory too small for the decoder is MPEG_CAPACITY here; memory
+ * too small for the stream's pictures is MPEG_CAPACITY from mpeg_feed(). */
+mpeg_result_t mpeg_open(void *memory, size_t size);
 /* Feed after NEED_INPUT, at most mpeg_input_space() bytes; data is copied.
  * end_of_input is final: drain mpeg_next() through MPEG_END, then close.
  * Oversized feeds are rejected without changing the decoder or taking ownership.

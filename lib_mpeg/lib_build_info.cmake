@@ -10,13 +10,11 @@ include(${CMAKE_CURRENT_LIST_DIR}/../cmake/optimization.cmake)
 set(LIB_COMPILER_FLAGS ${MPEG_COLD_OPT} -g -fwrapv -mdual-issue)
 set(LIB_ASM_SRCS "")
 if(MPEG_BACKEND STREQUAL "pl_mpeg")
-    set(MPEG_RGB565_VPU ON CACHE BOOL "Use the bit-exact XS3 VPU RGB565 converter")
-    if(MPEG_RGB565_VPU)
-        set(rgb565_vpu_flag -DMPEG_RGB565_VPU=1)
-        set(LIB_ASM_SRCS src/rgb565/mpeg_rgb565_xs3.S)
-    else()
-        set(rgb565_vpu_flag -DMPEG_RGB565_VPU=0)
-    endif()
+    # Options live in api/mpeg_config.h; an application overrides them in an
+    # optional mpeg_conf.h.
+    set(LIB_OPTIONAL_HEADERS mpeg_conf.h)
+    # Both kernels are assembled whichever implementation the header selects.
+    set(LIB_ASM_SRCS ../third_party/pl_mpeg/xcore/pl_mpeg_idct_xs3.S src/rgb565/mpeg_rgb565_xs3.S)
     set(LIB_INCLUDES api src/pl_mpeg ../third_party/pl_mpeg)
     set(LIB_C_SRCS src/pl_mpeg/mpeg_video.c src/pl_mpeg/mpeg_memory.c src/rgb565/mpeg_rgb565.c)
     # This TU contains the entire single-header decoder, including IDCT and
@@ -24,10 +22,7 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
     # Supported push input installs no callbacks, but upstream callback branches
     # still prevent complete automatic stack analysis.
     set(LIB_COMPILER_FLAGS_mpeg_video.c -O3 -g -fwrapv -mdual-issue -Wno-xcore-fptrgroup)
-    # Per-file flags replace the module flags in XTC 15.3.1: carry the backend
-    # selector here as well as optimisation flags, so OFF cannot fall back to
-    # the source's VPU-on default.
-    set(LIB_COMPILER_FLAGS_mpeg_rgb565.c -O3 -g -fwrapv -mdual-issue ${rgb565_vpu_flag})
+    set(LIB_COMPILER_FLAGS_mpeg_rgb565.c -O3 -g -fwrapv -mdual-issue)
 elseif(MPEG_BACKEND STREQUAL "libmpeg2")
     set(LIB_INCLUDES api src/libmpeg2 ../third_party/libmpeg2/include ../third_party/libmpeg2/libmpeg2)
     list(APPEND LIB_COMPILER_FLAGS -Wno-xcore-fptrgroup)

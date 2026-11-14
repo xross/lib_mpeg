@@ -1,13 +1,10 @@
 // Copyright 2026 XMOS LIMITED.
 // This Software is subject to the terms of the XMOS Public Licence: Version 1.
+#include "mpeg_config.h"
 #include "mpeg_rgb565.h"
 
 #if !defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error RGB565 word packing assumes a little-endian target
-#endif
-
-#ifndef MPEG_RGB565_VPU
-#define MPEG_RGB565_VPU 1
 #endif
 
 #if MPEG_RGB565_VPU && (defined(__XS3A__) || defined(MPEG_RGB565_VPU_EMULATE))

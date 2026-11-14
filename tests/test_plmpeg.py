@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--api-test", type=Path, required=True)
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--approx-idct", action="store_true")
     args = parser.parse_args()
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
@@ -53,17 +54,25 @@ def main():
             assert "frames=24" in result.stdout and "status=OK" in result.stdout, result.stdout
             decoded = output.read_bytes()
             assert len(decoded) == len(expected)
-            assert decoded[:len(upstream_pixels)] == upstream_pixels, "Adapter differs from pristine upstream PL_MPEG"
+            if args.approx_idct:
+                port_errors = [abs(a - b) for a, b in zip(decoded, upstream_pixels)]
+                port_mse = sum(e * e for e in port_errors) / len(port_errors)
+                # The legacy transform itself has chroma outliers of 12 on
+                # this fixture relative to FFmpeg. Do not demand its rounding
+                # from the normalized transform; check FFmpeg more tightly below.
+                assert port_mse <= 1 and max(port_errors) <= 16, (port_mse, max(port_errors))
+            else:
+                assert decoded[:len(upstream_pixels)] == upstream_pixels, "Adapter differs from pristine upstream PL_MPEG"
             if baseline is None:
                 baseline = decoded
             assert decoded == baseline, f"Refill-dependent output: {bframes=} {chunk=}"
             errors = [abs(a - b) for a, b in zip(decoded, expected)]
             mse = sum(e * e for e in errors) / len(errors)
             psnr = 10 * math.log10(255 * 255 / mse) if mse else math.inf
-            # Require exact agreement with the pristine implementation above.
-            # Its integer reconstruction is not bit-exact to FFmpeg; retain an
-            # independent quality bound as well as the bit-exact port check.
-            assert psnr >= 45 and max(errors) <= 16, (psnr, max(errors))
+            # Both transform paths must also satisfy an independent decoder's
+            # quality bound; only the original arithmetic promises byte identity.
+            minimum_psnr, maximum_error = (50, 8) if args.approx_idct else (45, 16)
+            assert psnr >= minimum_psnr and max(errors) <= maximum_error, (psnr, max(errors))
             if chunk == 4096:
                 print(result.stdout, end="")
                 print(f"FFmpeg reference: PSNR={psnr:.2f} dB max_error={max(errors)}")

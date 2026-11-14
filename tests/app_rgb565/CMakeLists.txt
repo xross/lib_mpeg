@@ -7,6 +7,12 @@ set(APP_C_SRCS ../rgb565_test.c)
 set(APP_INCLUDES ../../third_party/pl_mpeg_upstream)
 set(APP_COMPILER_FLAGS -O3 -g -report -mcmodel=large -mdual-issue -fwrapv
     -Wno-xcore-fptrgroup)
+option(MPEG_RGB565_VPU "Exercise the XS3 vector colour converter" ON)
+if(MPEG_RGB565_VPU)
+    list(APPEND APP_COMPILER_FLAGS -DMPEG_RGB565_VPU=1)
+else()
+    list(APPEND APP_COMPILER_FLAGS -DMPEG_RGB565_VPU=0)
+endif()
 # This finite, standalone test uses JTAG I/O outside its timed sections; it has
 # no USB/I/O real-time tasks and does not need board-specific xSCOPE wiring.
 include(${CMAKE_CURRENT_LIST_DIR}/../../examples/deps.cmake)

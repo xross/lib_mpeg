@@ -17,8 +17,8 @@ extern "C" {
  * identical to PL_MPEG's own RGB conversion followed by truncation to 5/6/5
  * bits. No state is shared with the decoder, so these may be called on a
  * different tile from the one that decodes. XS3 builds use the VPU by default;
- * MPEG_RGB565_VPU=OFF selects the scalar lookup-table implementation. Only the
- * scalar table initialisation is non-reentrant: make its first call from one
+ * MPEG_RGB565_VPU 0 in mpeg_conf.h selects the scalar lookup-table implementation.
+ * Only scalar table initialisation is non-reentrant: make its first call from one
  * task. The VPU implementation uses task-local stack scratch, with no tables. */
 
 /* Convert two picture rows that share one row of chroma.
