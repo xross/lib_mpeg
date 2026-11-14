@@ -420,8 +420,7 @@ the video decoder: it may run on another task or another tile.
     mpeg_audio_close();
 
 * Input is an MP2 elementary stream starting on a frame header. The application
-  demultiplexes ``.mpg`` program streams itself; the ``lib_xuh`` ``app_xuh_msc``
-  example contains a reader that does.
+  demultiplexes ``.mpg`` program streams itself.
 * Each frame is ``MPEG_AUDIO_FRAME_SAMPLES`` (1152) interleaved left/right pairs
   of ``float`` in the range -1 to 1, valid until the next call. A mono stream is
   given on both channels.
@@ -735,39 +734,14 @@ with XTC Tools active::
     xrun --adapter-id SERIAL --io \
       build-idct-validation-hardware/bin/plmpeg/test_mpeg_idct_plmpeg.xe
 
-USB/LCD integration
-===================
-
-The default decoder in ``lib_xuh/examples/app_xuh_msc`` runs a 3025-picture,
-320 x 240 reference clip at **33.59 FPS**, with mean decode time **19.137 ms/frame**.
-The workload uses XU316 at 600 MHz, XTC Tools 15.3.1, ILI9341 at 50 MHz SPI,
-VPU IDCT and RGB565 conversion, read-ahead/multi-sector storage reads, early YUV
-acknowledgement, FPS overlay and activity LED. Audio and timing histograms are
-disabled. This is one integrated workload, not a standalone decoder rate or a
-guaranteed worst-case 30-FPS capability.
-
-For this clip the default transform's Y/Cb/Cr PSNR against FFmpeg is
-55.59/62.00/63.63 dB, with maximum sample errors 5/3/3. The transform intentionally
-changes rounding; it is not byte-identical to the original PL_MPEG transform.
-Optional timing histograms report decode and input/feed/decode/handoff
-service-period percentiles and maxima. Collect these with the current build
-and input; they are not guaranteed execution bounds. Service periods are
-unpaced YUV-handoff intervals, not physical LCD timestamps or missed
-presentation-deadline counts.
-
-The application's ``doc/rst/pipeline.rst`` documents its input formats, build
-configurations, ownership protocol, stage timings and physical display wiring.
-The cross-tile checksum-renderer fixture tests picture hashes, ownership,
-EOF/repeat and error recovery without modelling physical USB or LCD throughput.
-
 Codec and USB/LCD validation
 ============================
 
-All native decoder checks are part of the ``tests`` CMake project; none needs
-``lib_xuh`` or another application checkout. Generated elementary-stream fixtures
-are the default. For full-content validation, set ``MPEG_TEST_VIDEO_STREAM`` to
-an MPEG-1 elementary video file and ``MPEG_TEST_AUDIO_STREAM`` to an elementary
-MP2 audio file when configuring the same native test build.
+All native decoder checks are part of the ``tests`` CMake project. Generated
+elementary-stream fixtures are the default. For full-content validation, set
+``MPEG_TEST_VIDEO_STREAM`` to an MPEG-1 elementary video file and
+``MPEG_TEST_AUDIO_STREAM`` to an elementary MP2 audio file when configuring the
+same native test build.
 
 The MP2 reference check compares baseline PCM bit for bit with pristine
 upstream and bounds the reciprocal-scale/fused-window variants to a peak
