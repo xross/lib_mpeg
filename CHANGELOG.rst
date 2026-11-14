@@ -4,6 +4,11 @@ lib_mpeg change log
 UNRELEASED
 ----------
 
+  * CHANGED: Motion compensation shares specialised prediction/blending loops
+    and sliding-word reuse across platforms; xcore supplies aligned access and
+    LEXTRACT, with unchanged pixel rounding
+  * ADDED: Plane-edge, unaligned-buffer, padding-free portable and big-endian
+    word-model motion tests
   * ADDED: XS3 VPU inverse DCT with a bit-identical scalar model and configurable
     original transform
   * ADDED: MP2 push-input decoding, bounded application-supplied audio memory and

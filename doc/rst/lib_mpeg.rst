@@ -187,22 +187,27 @@ identical, and these changes in ``pl_mpeg.h`` are always active:
   eight bits of each coefficient code in one lookup.
 * The original IDCT skips columns and rows whose only non-zero coefficient is
   the first.
-* Motion compensation processes four pixels per 32-bit word. Its rounded-average
-  helper evaluates each argument once, including load/extract expressions.
+* Motion compensation processes four pixels per 32-bit word, selects its
+  interpolation/blending loop once per block and reuses a sliding window of
+  source words. Adjacent horizontal predictions share loads. Address arithmetic,
+  load sequencing and exact MPEG rounding are portable code in ``pl_mpeg.h``.
 * Block output uses row pointers, skips constant blocks that add zero, and
   tests four pixels at once for clamping.
 * Start codes are found by scanning the buffered data directly instead of one
   bounds-checked call per byte.
 * A platform header may replace word loads and stores, full-pixel block copies
   and pixel stores. Without one the portable code is used.
-* On xcore, the platform header reads and writes aligned words directly,
-  because unaligned word access traps, building an unaligned source word from
-  two aligned ones with ``LEXTRACT``. Frame memory must therefore be aligned to
-  four bytes, which the adapter's arena guarantees. On XS3, aligned full-pixel
-  prediction is copied with vector loads and stores.
-  The original padded-word read contract is retained. There are no additional
-  image buffers or tables. Half-pixel rounding and the separate bidirectional
-  rounding step remain unchanged.
+* The portable word-access path supports unaligned buffers and both byte orders.
+  Its final horizontal group reads only the one extra pixel needed, with no
+  word-padding requirement. A platform may replace raw loads and extraction,
+  state its word byte order and opt into padded full-word lookahead.
+* On xcore, only those access mechanisms are specialised in
+  ``xcore/pl_mpeg_xcore.h``: cache the alignment offset once per block, read/write
+  aligned words, and use ``LEXTRACT`` for an unaligned pixel window. Frame memory
+  must be aligned to four bytes, which the adapter's arena guarantees. On XS3,
+  aligned full-pixel prediction uses the existing vector copy hook. The padded
+  read contract is unchanged; there are no additional image buffers or tables.
+  Half-pixel rounding and the separate bidirectional rounding step are unchanged.
 
 Three further changes are optional, selected by the macros described under
 `Configuration`_, and alter rounding:
@@ -555,11 +560,16 @@ the original (XTC Tools active)::
     xsim build-idct-xcore/bin/plmpeg/test_mpeg_idct_plmpeg.xe
 
 ``mpeg_motion_test`` additionally checks the fork's actual macroblock function
-against an independent per-pixel reference in 2128 cases. It covers 8- and
+against an independent per-pixel reference in 2128 interior cases. It covers 8- and
 16-pixel blocks, every source alignment, positive and negative integer/half-pixel
 motion, all interpolation modes and bidirectional averaging, using zero, 255,
 alternating and deterministic random data. The entire destination is checked,
-including bytes outside the written block. ``mpeg_api_test`` also covers the
+including bytes outside the written block. Plane-edge checks add 326656 native
+cases covering all source/destination byte alignments, with exact-size source
+allocations so ASan detects excess tail reads. The same test runs against
+big-endian word-access hooks in ``mpeg_motion_big_endian_test``. The standalone
+xcore build checks 20416 plane-edge cases with its aligned, padded-buffer contract.
+``mpeg_api_test`` also covers the
 MP2 API: rejected headers and formats, truncation, bounded feeds, and memory
 that is null, misaligned or too small for either decoder. Build the motion test for xcore to
 exercise the aligned-load/LEXTRACT implementation rather than the native
@@ -729,7 +739,7 @@ USB/LCD integration
 ===================
 
 The default decoder in ``lib_xuh/examples/app_xuh_msc`` runs a 3025-picture,
-320 x 240 reference clip at **30.37 FPS**, with mean decode time **22.899 ms/frame**.
+320 x 240 reference clip at **33.59 FPS**, with mean decode time **19.137 ms/frame**.
 The workload uses XU316 at 600 MHz, XTC Tools 15.3.1, ILI9341 at 50 MHz SPI,
 VPU IDCT and RGB565 conversion, read-ahead/multi-sector storage reads, early YUV
 acknowledgement, FPS overlay and activity LED. Audio and timing histograms are
@@ -739,11 +749,11 @@ guaranteed worst-case 30-FPS capability.
 For this clip the default transform's Y/Cb/Cr PSNR against FFmpeg is
 55.59/62.00/63.63 dB, with maximum sample errors 5/3/3. The transform intentionally
 changes rounding; it is not byte-identical to the original PL_MPEG transform.
-Instrumented decode p95/p99 upper bounds are 35/40 ms, with an observed maximum
-of 49.711 ms. The decoder task's input/feed/decode/handoff service-period p95/p99
-bounds are 44/50 ms, with an observed maximum of 60.176 ms. Of 3024 service
-periods, 457 exceed 40 ms. These are unpaced YUV-handoff intervals, not physical
-LCD timestamps or missed presentation-deadline counts.
+Optional timing histograms report decode and input/feed/decode/handoff
+service-period percentiles and maxima. Collect these with the current build
+and input; they are not guaranteed execution bounds. Service periods are
+unpaced YUV-handoff intervals, not physical LCD timestamps or missed
+presentation-deadline counts.
 
 The application's ``doc/rst/pipeline.rst`` documents its input formats, build
 configurations, ownership protocol, stage timings and physical display wiring.
