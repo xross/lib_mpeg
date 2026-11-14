@@ -27,7 +27,10 @@ static mpeg_arena_t arena;
 static plm_buffer_t *buffer;
 static plm_video_t *video;
 static unsigned ended, frames, checked, have_picture, prefix_size;
-static unsigned width, height;
+static unsigned width, height, frame_rate_code;
+/* MPEG-1 sequence-header rate codes 1..8; preserve fractional rates exactly. */
+static const unsigned frame_rate_num[8] = {24000, 24, 25, 30000, 30, 50, 60000, 60};
+static const unsigned frame_rate_den[8] = {1001, 1, 1, 1001, 1, 1, 1001, 1};
 static uint8_t prefix[8];
 static uint32_t scanner;
 static mpeg_result_t failure;
@@ -42,6 +45,7 @@ mpeg_result_t mpeg_open(void *memory, size_t size)
     if (size < VIDEO_FIXED) return MPEG_CAPACITY;
     mpeg_memory_select(&arena);
     ended = frames = checked = have_picture = prefix_size = 0;
+    frame_rate_code = 0;
     scanner = UINT32_C(0xffffffff);
     failure = MPEG_NEED_INPUT;
     buffer = plm_buffer_create_with_capacity(MPEG_INPUT_CAPACITY);
@@ -76,6 +80,7 @@ mpeg_result_t mpeg_feed(const uint8_t *data, size_t size, int end_of_input)
             /* Upstream allocates the pictures unchecked on this header. */
             if (MPEG_MEMORY_BLOCK(VIDEO_PICTURES(width, height)) > mpeg_memory_room(&arena))
                 return failure = MPEG_CAPACITY;
+            frame_rate_code = rate;
             checked = 1;
         }
         scanner = (scanner << 8) | byte;
@@ -112,6 +117,8 @@ mpeg_result_t mpeg_next(mpeg_frame_t *frame)
     frame->width = width;
     frame->height = height;
     frame->number = frames++;
+    frame->frame_rate_num = frame_rate_num[frame_rate_code - 1];
+    frame->frame_rate_den = frame_rate_den[frame_rate_code - 1];
     frame->plane[0] = decoded->y.data;
     frame->plane[1] = decoded->cb.data;
     frame->plane[2] = decoded->cr.data;

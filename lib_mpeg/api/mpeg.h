@@ -30,6 +30,9 @@ typedef struct {
      * tile-local pointers are read-only and valid until the next decode/close. */
     const uint8_t *plane[3];
     unsigned stride[3];
+    /* Nominal frames/second from the sequence header, as an exact rational
+     * (for example 30000/1001). This is source timing, not measured throughput. */
+    unsigned frame_rate_num, frame_rate_den;
 } mpeg_frame_t;
 typedef struct { size_t peak, live, capacity; int guards_ok; } mpeg_memory_stats_t;
 

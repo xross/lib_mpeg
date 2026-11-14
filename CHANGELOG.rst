@@ -4,6 +4,7 @@ lib_mpeg change log
 UNRELEASED
 ----------
 
+  * ADDED: Exact nominal sequence-header frame rate in decoded video frames
   * CHANGED: Motion compensation shares specialised prediction/blending loops
     and sliding-word reuse across platforms; xcore supplies aligned access and
     LEXTRACT, with unchanged pixel rounding

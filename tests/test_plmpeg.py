@@ -78,6 +78,17 @@ def main():
                 print(f"FFmpeg reference: PSNR={psnr:.2f} dB max_error={max(errors)}")
                 assert int(re.search(r"arena_peak=(\d+)", result.stdout)[1]) <= 384 * 1024
         run(args.api_test, stream)
+    rates = ((24000, 1001), (24, 1), (25, 1), (30000, 1001),
+             (30, 1), (50, 1), (60000, 1001), (60, 1))
+    for code, (numerator, denominator) in enumerate(rates, 1):
+        data = bytearray((args.work / "ipb0.m1v").read_bytes())
+        offset = 0
+        while (offset := data.find(b"\x00\x00\x01\xb3", offset)) >= 0:
+            data[offset + 7] = (data[offset + 7] & 0xf0) | code
+            offset += 8
+        stream = args.work / f"rate-{code}.m1v"
+        stream.write_bytes(data)
+        run(args.api_test, "--rate", stream, numerator, denominator)
     for name, data in (("empty", b""), ("invalid", b"not MPEG video"),
                        ("header-only", b"\0\0\1\xb3\x14\x00\xf0\x13")):
         stream = args.work / f"{name}.m1v"

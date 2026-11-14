@@ -2,6 +2,7 @@
 // This Software is subject to the terms of the XMOS Public Licence: Version 1.
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "mpeg.h"
 #include "mpeg_audio.h"
 
@@ -82,11 +83,11 @@ static void small_memory(const char *path)
     CHECK(mpeg_memory_stats().guards_ok && !mpeg_memory_stats().live);
 }
 
-static void repeat_decode(const char *path)
+static void repeat_decode(const char *path, unsigned rate_num, unsigned rate_den, unsigned cycles)
 {
     static unsigned char input[4096];
     uint32_t baseline = 0;
-    for (unsigned cycle = 0; cycle < 30; ++cycle) {
+    for (unsigned cycle = 0; cycle < cycles; ++cycle) {
         FILE *file = fopen(path, "rb");
         CHECK(file);
         CHECK(mpeg_open(memory, sizeof(memory)) == MPEG_NEED_INPUT);
@@ -98,6 +99,7 @@ static void repeat_decode(const char *path)
             if (result == MPEG_END) break;
             if (result == MPEG_FRAME) {
                 CHECK(frame.number == frames++);
+                CHECK(frame.frame_rate_num == rate_num && frame.frame_rate_den == rate_den);
                 for (unsigned p = 0; p < 3; ++p) {
                     unsigned w = p ? (frame.width + 1) / 2 : frame.width;
                     unsigned h = p ? (frame.height + 1) / 2 : frame.height;
@@ -128,6 +130,12 @@ static void repeat_decode(const char *path)
 
 int main(int argc, char **argv)
 {
+    if (argc == 5 && !strcmp(argv[1], "--rate")) {
+        repeat_decode(argv[2], (unsigned)strtoul(argv[3], NULL, 10),
+                      (unsigned)strtoul(argv[4], NULL, 10), 1);
+        puts("PASS: sequence-header nominal frame rate");
+        return 0;
+    }
     CHECK(!mpeg_input_space());
     CHECK(mpeg_next(NULL) == MPEG_ERROR);
     CHECK(mpeg_open(NULL, sizeof(memory)) == MPEG_ERROR);
@@ -150,7 +158,16 @@ int main(int argc, char **argv)
         mpeg_close();
         CHECK(mpeg_memory_stats().guards_ok && !mpeg_memory_stats().live);
     }
-    if (argc == 2) { small_memory(argv[1]); repeat_decode(argv[1]); }
+    /* Reserved rate codes are rejected even when the header arrives bytewise. */
+    for (unsigned rate = 0; rate < 16; ++rate) {
+        if (rate >= 1 && rate <= 8) continue;
+        uint8_t header[] = {0, 0, 1, 0xb3, 0x14, 0x00, 0xf0, (uint8_t)(0x10 | rate)};
+        CHECK(mpeg_open(memory, sizeof(memory)) == MPEG_NEED_INPUT);
+        for (unsigned i = 0; i < sizeof(header); ++i)
+            CHECK(mpeg_feed(header + i, 1, 0) == (i == 7 ? MPEG_UNSUPPORTED : MPEG_NEED_INPUT));
+        mpeg_close();
+    }
+    if (argc == 2) { small_memory(argv[1]); repeat_decode(argv[1], 25, 1, 30); }
     puts("PASS: PL_MPEG video and audio API, supplied memory, bounded feed, reopen, guards and cleanup");
     return 0;
 }

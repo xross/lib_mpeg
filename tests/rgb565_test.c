@@ -80,7 +80,8 @@ static void test_frame(void)
     reference.cb.data = cb; reference.cr.data = cr;
     plm_frame_to_rgb(&reference, rgb, WIDTH * 3);
 
-    mpeg_frame_t frame = { WIDTH, HEIGHT, 0, {y, cb, cr}, {Y_STRIDE, C_STRIDE, C_STRIDE} };
+    mpeg_frame_t frame = {.width = WIDTH, .height = HEIGHT,
+        .plane = {y, cb, cr}, .stride = {Y_STRIDE, C_STRIDE, C_STRIDE}};
     memset(out, 0xa5, sizeof(out));
     mpeg_frame_to_rgb565(&frame, out, OUT_STRIDE);
     for (unsigned row = 0; row < HEIGHT; ++row) {
