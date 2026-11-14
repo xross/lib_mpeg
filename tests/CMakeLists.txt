@@ -41,6 +41,10 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
     add_executable(mpeg_motion_test motion_test.c)
     target_include_directories(mpeg_motion_test PRIVATE ${root}/third_party/pl_mpeg)
     target_compile_options(mpeg_motion_test PRIVATE -O3 -fwrapv)
+    add_executable(mpeg_motion_big_endian_test motion_test.c)
+    target_include_directories(mpeg_motion_big_endian_test PRIVATE ${root}/third_party/pl_mpeg)
+    target_compile_definitions(mpeg_motion_big_endian_test PRIVATE MPEG_TEST_BIG_ENDIAN=1)
+    target_compile_options(mpeg_motion_big_endian_test PRIVATE -O3 -fwrapv)
     # Desktop-only oracle, independent of our bounded allocator/feed adapter.
     # It is built from the untouched upstream checkout, never from the fork in
     # third_party/pl_mpeg, so the exact-output test cannot compare the fork
@@ -58,9 +62,10 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
     target_compile_options(mpeg_rgb565_test PRIVATE -O1 -fwrapv)
     target_link_libraries(mpeg_rgb565_test PRIVATE mpeg_scalar)
     set(decoder_target mpeg_scalar)
-    set(test_targets mpeg_bench mpeg_api_test plmpeg_upstream_ref mpeg_rgb565_test mpeg_motion_test)
+    set(test_targets mpeg_bench mpeg_api_test plmpeg_upstream_ref mpeg_rgb565_test mpeg_motion_test mpeg_motion_big_endian_test)
     add_test(NAME mpeg_api COMMAND mpeg_api_test)
     add_test(NAME mpeg_motion COMMAND mpeg_motion_test)
+    add_test(NAME mpeg_motion_big_endian COMMAND mpeg_motion_big_endian_test)
     add_test(NAME mpeg_rgb565 COMMAND mpeg_rgb565_test)
     add_executable(mpeg_rgb565_vpu_test rgb565_test.c rgb565_vpu_model.c
         ${root}/lib_mpeg/src/rgb565/mpeg_rgb565.c)
@@ -80,7 +85,7 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
         ${CMAKE_CURRENT_SOURCE_DIR}/test_plmpeg.py --bench $<TARGET_FILE:mpeg_bench>
         --api-test $<TARGET_FILE:mpeg_api_test> --upstream $<TARGET_FILE:plmpeg_upstream_ref>
         --work ${CMAKE_CURRENT_BINARY_DIR}/fixtures ${plmpeg_reference_args})
-    set_tests_properties(mpeg_api mpeg_motion mpeg_rgb565 mpeg_rgb565_vpu mpeg1_reference PROPERTIES
+    set_tests_properties(mpeg_api mpeg_motion mpeg_motion_big_endian mpeg_rgb565 mpeg_rgb565_vpu mpeg1_reference PROPERTIES
         ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1" TIMEOUT 120)
 
     add_executable(yuv_compare yuv_compare.c)
