@@ -26,8 +26,8 @@ Two backends are available. Only one is compiled into a build:
      - ``lib_mpeg/api/mpeg2.h``
      - GPL-2.0-or-later
 
-Both decoders run on one thread. On XS3 the PL_MPEG backend's inverse DCT and
-the separate RGB565 colour converter use the vector unit (VPU); the rest of that
+Both decoders run on one thread. On XS3 the PL_MPEG backend's inverse DCT,
+optional S32 audio window and separate RGB565 colour converter use the VPU; the rest of that
 decoder, and all of libmpeg2, is scalar C. The two decoder interfaces are not
 interchangeable. The default backend exports a small
 push-input API; the optional backend retains the upstream libmpeg2 API. A shared
@@ -314,6 +314,15 @@ library includes it; options it does not define keep their defaults.
      - 1
      - 1 uses fused multiply-accumulate in the MP2 synthesis window, 0 the
        original separate multiply and add. Float rounding differs.
+   * - ``MPEG_AUDIO_FORMAT``
+     - ``MPEG_AUDIO_FORMAT_FLOAT`` (0)
+     - ``MPEG_AUDIO_FORMAT_S32`` (1) selects saturating full-scale signed 32-bit
+       PCM. Float fast options are ignored for S32. Set consistently for the
+       library and every consumer of ``mpeg_audio.h``.
+   * - ``MPEG_AUDIO_S32_VPU``
+     - 1 on XS3, 0 elsewhere
+     - Select the XS3 integer synthesis window, or its bit-identical portable C
+       model. Only applies to S32; explicit vector selection requires XS3.
 
 These are C preprocessor options, not CMake cache settings. Use ``mpeg_conf.h``
 for application configuration, or explicit compiler definitions in a dedicated
@@ -427,7 +436,8 @@ the video decoder: it may run on another task or another tile.
 * Input is an MP2 elementary stream starting on a frame header. The application
   demultiplexes ``.mpg`` program streams itself.
 * Each frame is ``MPEG_AUDIO_FRAME_SAMPLES`` (1152) interleaved left/right pairs
-  of ``float`` in the range -1 to 1, valid until the next call. A mono stream is
+  of ``mpeg_audio_sample_t``: normalized ``float`` by default, or ``int32_t``
+  Q1.31 with ``MPEG_AUDIO_FORMAT_S32``. Valid until the next call. A mono stream is
   given on both channels.
 * ``mpeg_audio_next()`` returns ``MPEG_NEED_INPUT`` until a whole frame is
   buffered. At most ``MPEG_AUDIO_INPUT_CAPACITY`` (4 KiB) is buffered, and
@@ -437,6 +447,25 @@ the video decoder: it may run on another task or another tile.
   ``MPEG_ERROR``.
 * One audio decoder can be open per tile. No output, pacing or audio/video
   synchronisation is provided.
+
+S32 synthesis uses Q27 butterfly coefficients and Q9 history. The checked-in
+generator proves that every intermediate fits signed 32 bits for subband
+magnitudes up to 65536, including propagated rounding errors, and that Q10 would
+overflow. A valid stream stays within that magnitude. An invalid grouped sample
+code could reach 104848, so the S32 decoder limits each grouped code to the
+largest valid one. Window coefficients include PCM output scaling. Each Q30
+product rounds with ties toward positive infinity. Sixteen of them total at
+most 2^36, so the XS3 40-bit saturating accumulator never saturates and the
+portable model does not need to limit the sum. A saturating seven-bit left shift
+produces PCM in
+``[-INT32_MAX, INT32_MAX]``. Over-range samples clip, never wrap. Float keeps its
+original unclipped behaviour. The transform remains scalar in both S32 paths;
+the vector window uses the existing doubled coefficients and history without
+another persistent buffer. Both formats use the same 28-KiB arena (27808 bytes
+peak on the tested XS3 target; 28112 on the 64-bit native host).
+
+The portable 64-bit S32 model prioritises correctness and is slower than float
+on XS3.
 
 Colour conversion to RGB565
 ===========================
@@ -757,6 +786,92 @@ codec tests. The video comparator checks
 sample counts, per-plane error, PSNR and first/final windows against pristine
 PL_MPEG and FFmpeg. Target kernel tests check vector execution against the scalar
 model; native models alone do not validate hardware instructions.
+
+S32 is checked against pristine upstream float at peak error at most ``2^-20``
+full scale and SNR at least 100 dB for non-clipping input. On all 5042 frames of
+the reference soundtrack (11,616,768 samples per play), peak error was
+``7.82e-7`` and SNR 117.41 dB. Generated rate/channel fixtures measured
+113.40--115.84 dB. Kernel checks independently cover the cosine transform,
+double-precision window reference, extreme/random input, all 16 history phases,
+rounding ties, saturation and guarded outputs. Intentional clipping is tested
+separately, not compared to an unclipped float sample with the same error limit.
+
+Four-way standalone audio timing/precision checks use exactly the same embedded
+MP2 fixture. On a 600-MHz XS3 target with one active application logical
+core, the 100-MHz hardware timer brackets only ``mpeg_audio_next()``. File I/O,
+refill, checksums and PCM dumps are outside timing; the staging buffer is not
+decoder memory. The runner checks full PCM against upstream and bit identity
+between target scalar/vector S32 output::
+
+    cmake -G "Unix Makefiles" -S tests/app_mp2_bench -B build-mp2-target
+    python tests/bench_audio_target.py --build build-mp2-target \
+      --native build-native --work build-mp2-target/multitone --adapter EFA1534L
+
+The native build must contain ``mp2_upstream``. Use ``--source soundtrack.mp2``
+for real-content frames or ``--sim --frames 3`` for a short bounded simulation.
+The runner generates the embedded input header and builds all four variants.
+PCM is hex-framed on basic xSCOPE stdout; the target does no host-file I/O.
+The benchmark enables lossless xSCOPE mode and verifies a PCM transport checksum;
+any transmission stalls occur outside the timed decoder call. Lines of the PCM
+dump are still occasionally lost on hardware; the runner detects that from the
+checksum and reruns the variant, up to three times.
+Each attempt retains its own ``*.attempt-N.log``. The latest attempt also
+remains available under the original variant log name.
+Select the target matching the physical board at configure time. The supplied
+``-DAPP_HW_TARGET=XK-EVK-XU316-AIV.xn`` uses XL1, unlike the stock Explorer
+target's XL0. XCommon requires custom XN files to live within the application
+source directory.
+This is an idle-core
+measurement, not an integrated player's service rate or a worst-case guarantee.
+For standalone kernel checks build ``tests/app_audio``; the ``s32_vector_smoke``
+configuration omits slow double-reference calculations for bounded simulation,
+while ``s32_vector`` retains the complete numerical checks for hardware.
+Configure ``-DAUDIO_TEST_XSCOPE=OFF`` for kernel simulator stdout. The MP2
+benchmark runner enables simulated offline xSCOPE with ``--sim``; hardware
+runs use basic xSCOPE I/O with ``xrun --xscope``.
+
+.. list-table:: 16-frame, 48-kHz stereo multitone on AIV, XTC 15.3.1, -O3 dual issue
+   :header-rows: 1
+
+   * - Arithmetic
+     - Mean ms/frame
+     - Arena bytes
+     - Peak error / SNR vs upstream
+   * - Original float
+     - 5.680
+     - 27808
+     - Identical
+   * - Fused float
+     - 3.033
+     - 27808
+     - 8.94e-8 / 145.18 dB
+   * - Portable S32
+     - 7.965
+     - 27808
+     - 6.00e-7 / 125.30 dB
+   * - XS3 S32 window
+     - 1.940
+     - 27808
+     - Bit-identical to portable S32
+
+The vector window makes this whole-decoder workload 1.56 times faster than fused
+float and 2.93 times faster than original float. The portable model is 2.63 times
+slower than fused float. The scalar butterflies are retained; vectorising the
+transform remains a separate follow-on rather than a requirement for this
+measured whole-decoder speedup.
+
+The corresponding benchmark executable text sizes (not bare kernel sizes) were
+23134, 22810, 23702 and 23438 bytes respectively. All had 29144 BSS bytes and the
+same provisional 4228-byte stack reservation. Initialized data was 12246--12254
+bytes, including the 9216-byte compressed fixture. The JSON report and per-image
+``.size``/``.resources`` files distinguish these benchmark overheads from the
+27808-byte decoder arena. Stack reservations bound unresolved generic callback
+graphs; they are not a proved worst-case stack bound for arbitrary PL_MPEG use.
+
+For a 16-frame soundtrack excerpt starting at 30 seconds, the same four-way
+hardware test measured 5.683, 3.033, 7.965 and 1.941 ms/frame. S32 scalar/vector
+PCM was identical, with peak error ``7.38e-7`` and SNR 115.01 dB. All of these
+target comparisons used xSCOPE, with no host-file access during the benchmark.
 
 ``tests/usb_lcd`` contains only end-to-end hardware integration tools for the
 external USB-storage/LCD application, not another decoder or native test project.

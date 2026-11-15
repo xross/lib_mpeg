@@ -24,8 +24,9 @@ push-input APIs that use memory supplied by the application. An optional
 `libmpeg2 <https://libmpeg2.sourceforge.io/>`_ backend can be selected instead to
 evaluate MPEG-2 decoding. Only one backend is compiled into a build.
 
-Both backends run on one thread. On XS3 the default backend's inverse DCT and
-the colour converter use the vector unit; the rest is scalar C.
+Both backends run on one thread. On XS3 the default backend's inverse DCT,
+colour converter and optional integer audio synthesis window use the vector unit;
+the rest is scalar C.
 
 ********
 Features
@@ -33,7 +34,8 @@ Features
 
 * MPEG-1 video decoding (I, P and B pictures) to progressive YUV420, up to 320 x 240.
 * Push-input API: the application owns storage I/O and feeds compressed bytes.
-* MP2 (MPEG-1 Audio Layer II) decoding to interleaved stereo ``float`` samples,
+* MP2 (MPEG-1 Audio Layer II) decoding to interleaved stereo ``float`` (default)
+  or saturating full-scale signed 32-bit PCM,
   independent of the video decoder and usable on another task or tile.
 * No heap use: the application passes each decoder its memory, 384 KiB for
   320 x 240 video (less for smaller pictures) and 28 KiB for audio.
@@ -45,7 +47,7 @@ Features
   transform remains selectable.
 * Options set in an application ``mpeg_conf.h`` header: inverse DCT, colour
   converter, and the MP2 decoder's fused synthesis window and reciprocal output
-  scaling.
+  scaling, or integer PCM with scalar/XS3 synthesis selection.
 * Optional libmpeg2 backend for MPEG-2 evaluation, with a 400 KiB guarded arena.
 * Standalone XU316 benchmark examples for each backend with decode timing.
 * Native reference tests checked against unmodified upstream and FFmpeg output.
@@ -78,6 +80,9 @@ Known issues
 * ``mpeg.h`` is an experimental API. The optional libmpeg2 backend uses its own
   ``mpeg2.h`` interface; the two are not interchangeable.
 * Binaries built with the libmpeg2 backend are subject to GPL-2.0-or-later.
+* The portable S32 synthesis path models exact XS3 rounding/symmetric saturation
+  using 64-bit arithmetic; it is not faster than float on XS3. Float remains the
+  library default. S32 clips at full scale whereas float is not clipped.
 
 ****************
 Development repo

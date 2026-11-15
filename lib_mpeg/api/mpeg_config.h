@@ -57,6 +57,24 @@
 #define MPEG_AUDIO_FAST_WINDOW 1
 #endif
 
+/** PCM format: unchanged float by default, or full-scale signed Q1.31 PCM. */
+#define MPEG_AUDIO_FORMAT_FLOAT 0
+#define MPEG_AUDIO_FORMAT_S32 1
+#ifndef MPEG_AUDIO_FORMAT
+#define MPEG_AUDIO_FORMAT MPEG_AUDIO_FORMAT_FLOAT
+#endif
+#if MPEG_AUDIO_FORMAT != MPEG_AUDIO_FORMAT_FLOAT && MPEG_AUDIO_FORMAT != MPEG_AUDIO_FORMAT_S32
+#error Invalid MPEG_AUDIO_FORMAT
+#endif
+/** Select XS3 integer synthesis; ignored by the float format. */
+#ifndef MPEG_AUDIO_S32_VPU
+#ifdef __XS3A__
+#define MPEG_AUDIO_S32_VPU 1
+#else
+#define MPEG_AUDIO_S32_VPU 0
+#endif
+#endif
+
 #if MPEG_VIDEO_IDCT != MPEG_VIDEO_IDCT_PLMPEG && MPEG_VIDEO_IDCT != MPEG_VIDEO_IDCT_SCALAR16 && \
     MPEG_VIDEO_IDCT != MPEG_VIDEO_IDCT_VPU16
 #error MPEG_VIDEO_IDCT must be MPEG_VIDEO_IDCT_PLMPEG, _SCALAR16 or _VPU16
@@ -72,6 +90,12 @@
 #endif
 #ifndef PLM_AUDIO_FAST_WINDOW
 #define PLM_AUDIO_FAST_WINDOW MPEG_AUDIO_FAST_WINDOW
+#endif
+#ifndef PLM_AUDIO_FORMAT
+#define PLM_AUDIO_FORMAT MPEG_AUDIO_FORMAT
+#endif
+#ifndef PLM_AUDIO_SYNTHESIS
+#define PLM_AUDIO_SYNTHESIS MPEG_AUDIO_S32_VPU
 #endif
 
 #endif

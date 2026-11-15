@@ -16,7 +16,7 @@ static int decode(FILE *source, FILE *output, unsigned read_size, unsigned play)
         if (result == MPEG_FRAME) {
             sample_rate = frame.sample_rate;
             unsigned samples = MPEG_AUDIO_FRAME_SAMPLES * MPEG_AUDIO_CHANNELS;
-            if (fwrite(frame.samples, sizeof(float), samples, output) != samples) { failed = 1; break; }
+            if (fwrite(frame.samples, sizeof(mpeg_audio_sample_t), samples, output) != samples) { failed = 1; break; }
             ++blocks;
         } else if (result == MPEG_NEED_INPUT) {
             size_t count = mpeg_audio_input_space();

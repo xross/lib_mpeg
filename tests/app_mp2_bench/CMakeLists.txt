@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.21)
+include($ENV{XMOS_CMAKE_PATH}/xcommon.cmake)
+project(test_mp2_bench)
+set(APP_HW_TARGET XK-EVK-XU316 CACHE STRING "Target/XN matching the board's xSCOPE wiring")
+set(APP_XSCOPE_SRCS config.xscope)
+set(APP_C_SRCS main.c ../../lib_mpeg/src/pl_mpeg/mpeg_video.c
+    ../../lib_mpeg/src/pl_mpeg/mpeg_memory.c)
+set(APP_ASM_SRCS ../../third_party/pl_mpeg/xcore/pl_mpeg_idct_xs3.S
+    ../../third_party/pl_mpeg/xcore/pl_mpeg_audio_xs3.S)
+set(APP_INCLUDES ../../lib_mpeg/api ../../lib_mpeg/src/pl_mpeg ../../third_party/pl_mpeg
+    ${CMAKE_BINARY_DIR}/fixture)
+set(flags -O3 -g -report -mdual-issue -fwrapv -Wno-xcore-fptrgroup)
+set(APP_COMPILER_FLAGS_float_original ${flags} -DMPEG_AUDIO_FAST_SCALE=0 -DMPEG_AUDIO_FAST_WINDOW=0)
+set(APP_COMPILER_FLAGS_float_fused ${flags} -DMPEG_AUDIO_FAST_SCALE=1 -DMPEG_AUDIO_FAST_WINDOW=1)
+set(APP_COMPILER_FLAGS_s32_scalar ${flags} -DMPEG_AUDIO_FORMAT=1 -DMPEG_AUDIO_S32_VPU=0)
+set(APP_COMPILER_FLAGS_s32_vector ${flags} -DMPEG_AUDIO_FORMAT=1 -DMPEG_AUDIO_S32_VPU=1)
+XMOS_REGISTER_APP()
+foreach(target ${APP_BUILD_TARGETS})
+    string(REPLACE "test_mp2_bench_" "" configuration "${target}")
+    set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/${configuration}")
+endforeach()

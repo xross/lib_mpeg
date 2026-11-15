@@ -4,6 +4,10 @@ lib_mpeg change log
 UNRELEASED
 ----------
 
+  * ADDED: Optional saturating S32 MP2 output with a standalone scalar synthesis
+    model, XS3 VPU window, generated fixed-point bounds and four-way target benchmark
+  * ADDED: S32 PCM accuracy, saturation, scalar/vector identity and replay tests;
+    float remains the default and the audio arena remains 28 KiB
   * ADDED: Exact nominal sequence-header frame rate in decoded video frames
   * CHANGED: Motion compensation shares specialised prediction/blending loops
     and sliding-word reuse across platforms; xcore supplies aligned access and

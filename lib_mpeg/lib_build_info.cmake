@@ -13,8 +13,9 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
     # Options live in api/mpeg_config.h; an application overrides them in an
     # optional mpeg_conf.h.
     set(LIB_OPTIONAL_HEADERS mpeg_conf.h)
-    # Both kernels are assembled whichever implementation the header selects.
-    set(LIB_ASM_SRCS ../third_party/pl_mpeg/xcore/pl_mpeg_idct_xs3.S src/rgb565/mpeg_rgb565_xs3.S)
+    # Kernels are assembled whichever implementation the header selects.
+    set(LIB_ASM_SRCS ../third_party/pl_mpeg/xcore/pl_mpeg_idct_xs3.S
+        ../third_party/pl_mpeg/xcore/pl_mpeg_audio_xs3.S src/rgb565/mpeg_rgb565_xs3.S)
     set(LIB_INCLUDES api src/pl_mpeg ../third_party/pl_mpeg)
     set(LIB_C_SRCS src/pl_mpeg/mpeg_video.c src/pl_mpeg/mpeg_memory.c src/rgb565/mpeg_rgb565.c)
     # This TU contains the entire single-header decoder, including IDCT and

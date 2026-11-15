@@ -15,7 +15,7 @@ def run(command, *, expect=0):
     return result.stdout
 
 
-def compare_pcm(reference, actual):
+def compare_pcm(reference, actual, s32=False):
     peak = noise = signal = 0.0
     samples = 0
     with reference.open("rb") as ref, actual.open("rb") as got:
@@ -25,7 +25,8 @@ def compare_pcm(reference, actual):
                 raise AssertionError("PCM sample count differs")
             if not a:
                 break
-            for x, y in zip(array("f", a), array("f", b)):
+            for x, y in zip(array("f", a), array("i" if s32 else "f", b)):
+                if s32: y /= 2147483648.0
                 if not math.isfinite(x) or not math.isfinite(y):
                     raise AssertionError("Non-finite PCM")
                 delta = abs(x - y)
@@ -36,7 +37,7 @@ def compare_pcm(reference, actual):
     if not samples:
         raise AssertionError("Empty PCM output")
     snr = 10 * math.log10(signal / noise) if noise else float("inf")
-    if peak > 1e-6 or snr < 120:
+    if peak > (2**-20 if s32 else 1e-6) or snr < (100 if s32 else 120):
         raise AssertionError(f"PCM precision regression: peak={peak}, SNR={snr}")
     return samples, peak, snr
 
@@ -56,9 +57,18 @@ def check(build, work, source, fragment):
     window = prefix.with_suffix(".window.f32")
     run([build / "mp2_bench_window", source, window, fragment])
     _, window_peak, window_snr = compare_pcm(ref, window)
+    integer = prefix.with_suffix(".s32")
+    run([build / "mp2_bench_s32", source, integer, fragment])
+    _, integer_peak, integer_snr = compare_pcm(ref, integer, s32=True)
+    for format, expected in ((0, ref), (1, integer)):
+        separate = prefix.with_suffix(f".separate-{format}")
+        run([build / f"mp2_separate_{format}", source, separate])
+        if separate.read_bytes() != expected.read_bytes():
+            raise AssertionError("Standalone separate-channel PCM differs")
     print(log, end="")
     print(f"PASS: fragment={fragment}, PCM samples={samples}, fast-scale peak={peak:.3g}, SNR={snr:.2f} dB")
     print(f"PASS: fused-window peak={window_peak:.3g}, SNR={window_snr:.2f} dB")
+    print(f"PASS: S32 peak={integer_peak:.3g}, SNR={integer_snr:.2f} dB")
 
 
 def main():
@@ -85,7 +95,7 @@ def main():
                        ("truncated", fixture.read_bytes()[:123])):
         bad = work / f"{name}.mp2"
         bad.write_bytes(data)
-        for target in ("mp2_bench", "mp2_bench_fast", "mp2_bench_window"):
+        for target in ("mp2_bench", "mp2_bench_fast", "mp2_bench_window", "mp2_bench_s32"):
             run([build / target, bad, work / "bad.f32"], expect=1)
     if args.full:
         check(build, work, args.full.resolve(), 4096)

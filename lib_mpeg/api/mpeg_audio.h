@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "mpeg.h"
+#include "mpeg_config.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -18,10 +19,15 @@ extern "C" {
  * audio/video synchronisation are left to the application. */
 enum { MPEG_AUDIO_INPUT_CAPACITY = 4096, MPEG_AUDIO_MEMORY_SIZE = 28672,
        MPEG_AUDIO_FRAME_SAMPLES = 1152, MPEG_AUDIO_CHANNELS = 2 };
+#if MPEG_AUDIO_FORMAT == MPEG_AUDIO_FORMAT_S32
+typedef int32_t mpeg_audio_sample_t;
+#else
+typedef float mpeg_audio_sample_t;
+#endif
 typedef struct {
-    /* MPEG_AUDIO_FRAME_SAMPLES pairs of left, right in the range -1 to 1; a
-     * mono stream is given on both. Valid until the next call for this decoder. */
-    const float *samples;
+    /* MPEG_AUDIO_FRAME_SAMPLES interleaved left/right pairs: float [-1,1] or
+     * full-scale signed S32. Mono is on both. Valid until the next decode call. */
+    const mpeg_audio_sample_t *samples;
     unsigned sample_rate;
 } mpeg_audio_frame_t;
 
