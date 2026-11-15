@@ -18,3 +18,7 @@ and compatibility or legacy requirements. Link to existing repository
 documentation where appropriate; do not duplicate shared xskills instructions.
 -->
 
+Do not add XMOS copyright notices or describe first-party files as XMOS-authored
+unless explicitly authorised. Preserve third-party attribution and existing
+licence terms; do not invent a replacement copyright holder or change licences
+without instruction.

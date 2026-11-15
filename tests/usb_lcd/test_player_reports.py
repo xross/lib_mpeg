@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
+"""Host-only checks of player reports and their completion predicate."""
 import unittest
-from run_hardware import Reports, STAGES
+from contextlib import redirect_stdout
+import io
+from pathlib import Path
+import sys
+import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
+from run_hardware import Reports, STAGES, measure
 
 
 def report(frames=6, byte_count=1234, number=1):
@@ -50,6 +58,12 @@ class ParserTests(unittest.TestCase):
         audio = "MP2 decode/discard: bytes=100 blocks=2 samples/channel=2304 rate=44100 errors=0 arena=20000 checksum=abcdef12"
         parser = Reports(6, audio_blocks=2, sample_rate=44100)
         parser.line(audio)
+        self.assertEqual(parser.current["audio"]["checksum"], "abcdef12")
+        Reports(6, audio_checksum=0xabcdef12).line(audio)
+        with self.assertRaises(RuntimeError):
+            Reports(6, audio_checksum=0x12345678).line(audio)
+        with self.assertRaises(RuntimeError):
+            Reports(6).line(audio.replace("arena=20000", "arena=28673"))
         for line in report():
             parser.line(line)
         self.assertEqual(parser.plays[0]["audio"]["samples"], 2304)
@@ -65,6 +79,37 @@ class ParserTests(unittest.TestCase):
         for line in report(byte_count=9999):
             parser.line(line)
         self.assertEqual(len(parser.plays), 1)
+
+
+class RunnerTests(unittest.TestCase):
+    def test_reports_stop_the_player_after_the_required_plays(self):
+        with tempfile.TemporaryDirectory() as directory:
+            xe = Path(directory) / "player.xe"
+            xe.write_bytes(b"fixture")
+            log = Path(directory) / "player.log"
+            reports = Reports(6, 1234)
+
+            def run(executable, **options):
+                self.assertEqual(executable, xe)
+                self.assertEqual(options["adapter_id"], "SERIAL")
+                self.assertEqual(options["timeout"], 30)
+                self.assertEqual(options["log_path"], log)
+                self.assertTrue(options["xscope_io_only"])
+                self.assertFalse(options["echo"])
+                for number in (1, 2, 3):
+                    for line in report(number=number):
+                        if options["until"](line):
+                            return True
+                return False
+
+            with patch.dict(sys.modules, {"Pyxrun": SimpleNamespace(run=run)}), \
+                    redirect_stdout(io.StringIO()):
+                result = measure(xe, "SERIAL", 2, 30, reports, log)
+            self.assertEqual(len(result["plays"]), 2)
+
+            with patch.dict(sys.modules, {"Pyxrun": SimpleNamespace(run=lambda *a, **k: False)}):
+                with self.assertRaisesRegex(RuntimeError, "Player hardware run failed"):
+                    measure(xe, "SERIAL", 2, 30, Reports(6), log)
 
 
 if __name__ == "__main__":

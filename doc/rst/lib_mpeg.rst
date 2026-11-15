@@ -803,6 +803,7 @@ refill, checksums and PCM dumps are outside timing; the staging buffer is not
 decoder memory. The runner checks full PCM against upstream and bit identity
 between target scalar/vector S32 output::
 
+    python -m pip install -r tests/requirements.txt
     cmake -G "Unix Makefiles" -S tests/app_mp2_bench -B build-mp2-target
     python tests/bench_audio_target.py --build build-mp2-target \
       --native build-native --work build-mp2-target/multitone --adapter EFA1534L
@@ -812,11 +813,19 @@ for real-content frames or ``--sim --frames 3`` for a short bounded simulation.
 The runner generates the embedded input header and builds all four variants.
 PCM is hex-framed on basic xSCOPE stdout; the target does no host-file I/O.
 The benchmark enables lossless xSCOPE mode and verifies a PCM transport checksum;
-any transmission stalls occur outside the timed decoder call. Lines of the PCM
-dump are still occasionally lost on hardware; the runner detects that from the
-checksum and reruns the variant, up to three times.
-Each attempt retains its own ``*.attempt-N.log``. The latest attempt also
-remains available under the original variant log name.
+any transmission stalls occur outside the timed decoder call. Captured PCM has
+occasionally failed the target's checksum; the cause remains unverified. The
+runner preserves each attempt and retries up to three times, but a retry is not
+evidence of reliable capture.
+Hardware runs use ``Pyxrun`` from ``test_support`` for deadlines,
+process cleanup and logs; ``tests/requirements.txt`` installs it into the
+active venv. Each attempt retains its own ``*.attempt-N.log``. The
+latest attempt also remains available under the original variant log name.
+Both hardware wrappers use ``Pyxrun.run()``: the audio benchmark disables stdout
+replay with ``echo=False`` and reads its retained log, while the player uses
+``until=`` to validate complete reports and stop after the requested plays.
+Process lifecycle tests belong to ``test_support``; the local tests cover MPEG
+report validation and PCM retry artifacts, not a second hardware session.
 Select the target matching the physical board at configure time. The supplied
 ``-DAPP_HW_TARGET=XK-EVK-XU316-AIV.xn`` uses XL1, unlike the stock Explorer
 target's XL0. XCommon requires custom XN files to live within the application

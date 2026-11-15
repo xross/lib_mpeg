@@ -78,16 +78,21 @@ def main():
     expected_blocks = None
     for variant in VARIANTS:
         xe = args.build.resolve() / "bin" / variant / f"test_mp2_bench_{variant}.xe"
-        # The PCM dump over xSCOPE text occasionally loses lines on hardware.
-        # The target's own checksum detects that; rerun rather than report it.
+        # Retain each attempt when captured PCM fails the target's checksum.
+        # The corruption cause remains unverified; retries do not establish reliability.
         for attempt in range(3):
             attempt_log = work / f"{variant}.attempt-{attempt + 1}.log"
             if args.sim:
                 log = run(["xsim", "--max-cycles", "500000000", "--xscope",
                            f"-offline {work / (variant + '.vcd')}", xe], cwd=work)
+                attempt_log.write_text(log)
             else:
-                log = run(["xrun", "--adapter-id", args.adapter, "--xscope", xe], cwd=work)
-            attempt_log.write_text(log)
+                import Pyxrun
+
+                if not Pyxrun.run(xe, adapter_id=args.adapter, timeout=180, cwd=work,
+                                  xscope_io_only=True, log_path=attempt_log, echo=False):
+                    raise RuntimeError(f"Benchmark hardware run failed; see {attempt_log}")
+                log = attempt_log.read_text(errors="replace")
             (work / f"{variant}.log").write_text(log)
             match = re.search(r"PASS: blocks=(\d+) rate=(\d+) ticks=(\d+) min=(\d+) max=(\d+) arena=(\d+) checksum=(\w+) pcm=(\w+)", log)
             if not match:

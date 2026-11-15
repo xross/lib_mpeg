@@ -58,13 +58,8 @@ Features
 Known issues
 ************
 
-* No parallelism within the decoder. Only the inverse DCT and the colour
-  converter are VPU-accelerated, on XS3. With the default inverse DCT, decoded
-  pictures are close to but not byte-identical with upstream PL_MPEG. The
-  standalone hardware decoder rate is not established. The default decoder in
-  the separate XU316/ILI9341 USB/LCD player runs a 320 x 240 reference clip at
-  30.37 FPS, with mean decode time 22.90 ms/frame. This is one integrated
-  workload, not a standalone decoder rate or a worst-case frame-time guarantee.
+* The default video inverse DCT is not bit-exact with upstream PL_MPEG. Select
+  ``MPEG_VIDEO_IDCT_PLMPEG`` when bit-exact output is required.
 * Elementary streams only (``.m1v`` video, MP2 audio). Multiplexed ``.mpg``
   program streams must be demultiplexed by the application.
 * No display, storage or audio output, and no audio/video synchronisation, is
@@ -79,10 +74,23 @@ Known issues
   bound.
 * ``mpeg.h`` is an experimental API. The optional libmpeg2 backend uses its own
   ``mpeg2.h`` interface; the two are not interchangeable.
-* Binaries built with the libmpeg2 backend are subject to GPL-2.0-or-later.
 * The portable S32 synthesis path models exact XS3 rounding/symmetric saturation
   using 64-bit arithmetic; it is not faster than float on XS3. Float remains the
   library default. S32 clips at full scale whereas float is not clipped.
+* Several XS3 kernels here are general enough to belong in ``lib_xcore_math``,
+  which has no equivalent today. MPEG-specific tables and history management
+  would stay in ``lib_mpeg``:
+
+  - ``plm_idct_pass_xs3()``: one pass of a 16-bit 8 x 8 inverse DCT as a matrix
+    product with a rounding shift. ``lib_xcore_math``'s 8 x 8 DCT is 8-bit only.
+  - ``mpeg_rgb565_vpu_block()``: YUV 4:2:0 to RGB565 colour conversion.
+  - ``plm_xs3_copy_block()``: a masked vector copy of 8 or 16 bytes per row.
+  - ``plm_audio_window_s32_xs3()``: a windowed dot product giving 32 outputs from
+    16 strided taps each; a polyphase FIR.
+  - ``plm_audio_idct36_s32()``: the 32-point MP2 transform. ``dct32_forward()``
+    in ``lib_xcore_math`` computes the same transform about twice as fast, but
+    its fixed output scaling loses four bits of precision here; it needs a
+    variant with selectable scaling before it can replace this.
 
 ****************
 Development repo

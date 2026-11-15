@@ -3,13 +3,9 @@
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
-import selectors
-import signal
 import subprocess
-import time
 
 
 STAGES = ("Load", "Wait for loader", "Feed", "Decode", "Transmit / ack wait",
@@ -18,9 +14,11 @@ STAGES = ("Load", "Wait for loader", "Feed", "Decode", "Transmit / ack wait",
 
 
 class Reports:
-    def __init__(self, frames, byte_count=None, timing=False, audio_blocks=None, sample_rate=48000):
+    def __init__(self, frames, byte_count=None, timing=False, audio_blocks=None, sample_rate=48000,
+                 audio_checksum=None):
         self.frames, self.byte_count, self.timing = frames, byte_count, timing
         self.audio_blocks, self.sample_rate = audio_blocks, sample_rate
+        self.audio_checksum = audio_checksum
         self.plays = []
         self.current = {}
 
@@ -43,8 +41,13 @@ class Reports:
             if self.audio_blocks is not None and tuple(map(int, match.groups()[1:4])) != (
                     self.audio_blocks, self.audio_blocks * 1152, self.sample_rate):
                 raise RuntimeError("Incorrect audio sample count or rate: " + text)
+            if int(match[5]) > 28672:
+                raise RuntimeError("Audio arena exceeds 28 KiB: " + text)
+            if self.audio_checksum is not None and int(match[6], 16) != self.audio_checksum:
+                raise RuntimeError("Incorrect audio PCM checksum: " + text)
             self.current["audio"] = {"bytes": int(match[1]), "blocks": int(match[2]),
-                                     "samples": int(match[3]), "rate": int(match[4])}
+                                     "samples": int(match[3]), "rate": int(match[4]),
+                                     "arena_peak": int(match[5]), "checksum": match[6]}
         elif text.startswith("MPEG arena:"):
             match = re.fullmatch(r"MPEG arena: peak=(\d+) live-after-close=0 bytes", text)
             if not match:
@@ -89,53 +92,18 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def stop(process):
-    if process.poll() is not None:
-        return
-    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(process.pid, sig)
-        except ProcessLookupError:
-            process.wait(timeout=10)
-            return
-        try:
-            process.wait(timeout=10)
-            return
-        except subprocess.TimeoutExpired:
-            pass
-
-
 def measure(executable, adapter, plays, timeout, reports, log_path):
-    command = ["xrun", "--adapter-id", adapter, "--xscope", "--xscope-io-only", str(executable.resolve())]
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
-    selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ)
-    pending = b""
-    deadline = time.monotonic() + timeout
-    try:
-        with log_path.open("w") as log:
-            while len(reports.plays) < plays:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0 or not selector.select(remaining):
-                    raise RuntimeError(f"Player exceeded {timeout} seconds; see {log_path}")
-                chunk = os.read(process.stdout.fileno(), 65536)
-                if not chunk:
-                    raise RuntimeError(f"Player exited without {plays} complete reports; see {log_path}")
-                pending += chunk
-                while b"\n" in pending:
-                    line, pending = pending.split(b"\n", 1)
-                    text = line.decode(errors="replace").rstrip("\r")
-                    log.write(text + "\n")
-                    log.flush()
-                    print(text, flush=True)
-                    reports.line(text)
-                    if len(reports.plays) == plays:
-                        break
-    finally:
-        selector.close()
-        stop(process)
-        process.stdout.close()
-    return {"command": command, "xe_sha256": digest(executable), "plays": reports.plays}
+    import Pyxrun
+
+    def completed(text):
+        print(text, flush=True)
+        reports.line(text)
+        return len(reports.plays) >= plays
+
+    if not Pyxrun.run(executable, adapter_id=adapter, timeout=timeout, until=completed,
+                      xscope_io_only=True, log_path=log_path, echo=False):
+        raise RuntimeError(f"Player hardware run failed; see {log_path}")
+    return {"xe_sha256": digest(executable), "plays": reports.plays}
 
 
 def main():
@@ -150,6 +118,8 @@ def main():
     parser.add_argument("--audio", action="store_true", help="Require decoded MP2 sample/block statistics")
     parser.add_argument("--audio-blocks", type=int, default=5042)
     parser.add_argument("--sample-rate", type=int, default=48000)
+    parser.add_argument("--audio-checksum", type=lambda text: int(text, 16),
+                        help="Expected PCM checksum in hex; use the selected format's reference")
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     if min(args.frames, args.plays, args.audio_blocks, args.sample_rate) < 1 or args.timeout <= 0:
@@ -167,7 +137,7 @@ def main():
         byte_count = result["stream_bytes"] = args.stream.stat().st_size
         result["stream_sha256"] = digest(args.stream)
     reports = Reports(args.frames, byte_count, args.timing,
-                      args.audio_blocks if args.audio else None, args.sample_rate)
+                      args.audio_blocks if args.audio else None, args.sample_rate, args.audio_checksum)
     result["run"] = measure(args.xe, args.adapter_id, args.plays, args.timeout, reports, args.work / "xrun.log")
     (args.work / "results.json").write_text(json.dumps(result, indent=2) + "\n")
     print(f"PASS: {args.plays} complete hardware plays, {args.frames} frames/play")

@@ -4,6 +4,8 @@ lib_mpeg change log
 UNRELEASED
 ----------
 
+  * CHANGED: Hardware tests use test_support's Pyxrun.run() for execution, deadlines
+    and cleanup, retaining per-attempt logs; dependencies are in tests/requirements.txt
   * ADDED: Optional saturating S32 MP2 output with a standalone scalar synthesis
     model, XS3 VPU window, generated fixed-point bounds and four-way target benchmark
   * ADDED: S32 PCM accuracy, saturation, scalar/vector identity and replay tests;
