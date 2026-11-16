@@ -24,8 +24,9 @@ typedef char video_memory_size[VIDEO_FIXED + MPEG_MEMORY_BLOCK(VIDEO_PICTURES(MP
 static mpeg_arena_t arena;
 static plm_buffer_t *buffer;
 static plm_video_t *video;
-static unsigned ended, frames, checked, have_picture, prefix_size;
+static unsigned opened, ended, frames, checked, have_picture, prefix_size;
 static unsigned width, height, frame_rate_code;
+static size_t input_capacity;
 /* MPEG-1 sequence-header rate codes 1..8; preserve fractional rates exactly. */
 static const unsigned frame_rate_num[8] = {24000, 24, 25, 30000, 30, 50, 60000, 60};
 static const unsigned frame_rate_den[8] = {1001, 1, 1, 1001, 1, 1, 1001, 1};
@@ -39,29 +40,34 @@ mpeg_memory_stats_t mpeg_memory_stats(void) { return mpeg_memory_arena_stats(&ar
 
 mpeg_result_t mpeg_open(void *memory, size_t size)
 {
-    if (video || !mpeg_memory_init(&arena, memory, size)) return MPEG_ERROR;
+    if (opened || !mpeg_memory_init(&arena, memory, size)) return MPEG_ERROR;
     if (size < VIDEO_FIXED) return MPEG_CAPACITY;
-    mpeg_memory_select(&arena);
+    opened = 1;
     ended = frames = checked = have_picture = prefix_size = 0;
     frame_rate_code = 0;
     scanner = UINT32_C(0xffffffff);
     failure = MPEG_NEED_INPUT;
-    buffer = plm_buffer_create_with_capacity(MPEG_INPUT_CAPACITY);
-    video = plm_video_create_with_buffer(buffer, 1);
+    /* No backend allocation until the first eight sequence-header bytes tell
+     * us the picture size. The initial feed allowance is a guaranteed minimum. */
+    input_capacity = MPEG_INPUT_CAPACITY;
     return MPEG_NEED_INPUT;
 }
 
+size_t mpeg_input_capacity(void) { return opened ? input_capacity : 0; }
+
 size_t mpeg_input_space(void)
 {
-    if (!video || ended || failure < 0) return 0;
-    return MPEG_INPUT_CAPACITY - plm_buffer_get_remaining(buffer);
+    if (!opened || ended || failure < 0) return 0;
+    return input_capacity - (buffer ? plm_buffer_get_remaining(buffer) : prefix_size);
 }
 
 mpeg_result_t mpeg_feed(const uint8_t *data, size_t size, int end_of_input)
 {
-    if (!video || ended || (size && !data)) return MPEG_ERROR;
+    if (!opened || ended || (size && !data)) return MPEG_ERROR;
     if (failure < 0) return failure;
     if (size > mpeg_input_space()) return MPEG_CAPACITY;
+    mpeg_memory_select(&arena);
+    size_t staged = checked ? 0 : size;
     /* Preflight before upstream's first picture allocation. Require a sequence
      * header at offset zero, bounded dimensions and a valid frame-rate code.
      * MPEG-2 extensions before the first picture are explicitly rejected. */
@@ -75,28 +81,36 @@ mpeg_result_t mpeg_feed(const uint8_t *data, size_t size, int end_of_input)
             if (prefix[0] || prefix[1] || prefix[2] != 1 || prefix[3] != 0xb3 ||
                 !width || !height || width > MPEG_MAX_WIDTH || height > MPEG_MAX_HEIGHT ||
                 !rate || rate > 8) return failure = MPEG_UNSUPPORTED;
-            /* Upstream allocates the pictures unchecked on this header. */
-            if (MPEG_MEMORY_BLOCK(VIDEO_PICTURES(width, height)) > mpeg_memory_room(&arena))
+            /* Reserve all allocations and guards before upstream sees a
+             * header. Everything else becomes compressed input, rounded down
+             * for alignment. There is one layout and no growth or fallback. */
+            size_t reserved = VIDEO_FIXED - MPEG_INPUT_CAPACITY +
+                              MPEG_MEMORY_BLOCK(VIDEO_PICTURES(width, height));
+            if (reserved > arena.capacity || MPEG_INPUT_CAPACITY > arena.capacity - reserved)
                 return failure = MPEG_CAPACITY;
+            input_capacity = (arena.capacity - reserved) & ~(size_t)7;
+            buffer = plm_buffer_create_with_capacity(input_capacity);
+            video = plm_video_create_with_buffer(buffer, 1);
+            plm_buffer_write(buffer, prefix, sizeof(prefix));
+            staged = i + 1;
             frame_rate_code = rate;
             checked = 1;
         }
         scanner = (scanner << 8) | byte;
         if (scanner == UINT32_C(0x000001b5)) return failure = MPEG_UNSUPPORTED;
-        if (scanner == UINT32_C(0x00000100)) have_picture = 1;
+        if (checked && scanner == UINT32_C(0x00000100)) have_picture = 1;
     }
-    mpeg_memory_select(&arena);
-    if (size) plm_buffer_write(buffer, (uint8_t *)data, size);
+    if (size > staged) plm_buffer_write(buffer, (uint8_t *)data + staged, size - staged);
     if (end_of_input) {
         ended = 1;
-        plm_buffer_signal_end(buffer);
+        if (buffer) plm_buffer_signal_end(buffer);
     }
     return MPEG_NEED_INPUT;
 }
 
 mpeg_result_t mpeg_next(mpeg_frame_t *frame)
 {
-    if (!video || !frame) return MPEG_ERROR;
+    if (!opened || !frame) return MPEG_ERROR;
     if (failure < 0) return failure;
     if (!checked || !have_picture) {
         if (ended) return failure = MPEG_ERROR;
@@ -132,6 +146,7 @@ void mpeg_close(void)
     if (video) plm_video_destroy(video);
     video = NULL;
     buffer = NULL;
+    opened = 0;
 }
 
 /* MP2 audio shares this translation unit: PL_MPEG is a single header whose

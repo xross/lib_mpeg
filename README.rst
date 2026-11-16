@@ -34,6 +34,10 @@ Features
 
 * MPEG-1 video decoding (I, P and B pictures) to progressive YUV420, up to 320 x 240.
 * Push-input API: the application owns storage I/O and feeds compressed bytes.
+* One automatic arena layout for benchmarks and applications: after the initial
+  sequence header, reserve decoder state, three pictures and allocation guards,
+  then use the remaining memory for compressed input. ``mpeg_input_capacity()``
+  reports the capacity; feeding and pacing remain the caller's responsibility.
 * MP2 (MPEG-1 Audio Layer II) decoding to interleaved stereo ``float`` (default)
   or saturating full-scale signed 32-bit PCM,
   independent of the video decoder and usable on another task or tile.
@@ -68,8 +72,10 @@ Known issues
   streams.
 * One video and one audio decoder per tile. Resolution changes, concatenated streams and seeking are
   unsupported; close and reopen to replay.
-* A compressed picture plus decoder lookahead must fit in the 32 KiB input buffer.
-  Not every 320 x 240 encode fits; reduce encoder quality or bitrate if it does not.
+* A compressed picture plus decoder lookahead must fit in the automatically
+  sized input buffer (at least 32 KiB). Not every encode/mux layout fits a given
+  arena; increase supplied memory or reduce quality/bitrate if necessary. There
+  is no heap fallback or midstream growth.
 * The example stack reservation (16 KiB) is provisional, not a proved worst-case
   bound.
 * ``mpeg.h`` is an experimental API. The optional libmpeg2 backend uses its own

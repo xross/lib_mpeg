@@ -71,7 +71,9 @@ PL_MPEG is customised only through the configuration macros it documents, define
 before the header is included:
 
 * ``PLM_NO_STDIO`` removes file access; the application supplies all input.
-* ``PLM_BUFFER_DEFAULT_SIZE`` is set to ``MPEG_INPUT_CAPACITY`` (32 KiB).
+* ``PLM_BUFFER_DEFAULT_SIZE`` is set to the minimum ``MPEG_INPUT_CAPACITY``
+  (32 KiB). The adapter supplies the actual video capacity explicitly after
+  calculating the stream's arena layout.
 * ``PLM_MALLOC``, ``PLM_REALLOC`` and ``PLM_FREE`` are redirected to the arena
   allocator. Without these PL_MPEG would call ``malloc()``, ``realloc()`` and
   ``free()``.
@@ -395,14 +397,27 @@ The application supplies the decoder's memory to ``mpeg_open()``: a buffer
 aligned to eight bytes that it does not touch until ``mpeg_close()``. Declaring
 it as a static array keeps its size in the build's memory report for the tile.
 All decoder allocations come from it, including the three YUV420 pictures and
-the ``MPEG_INPUT_CAPACITY`` (32 KiB) compressed buffer.
+compressed input. ``mpeg_open()`` makes no backend allocations. The first eight
+sequence-header bytes are staged; after validating the dimensions, the adapter
+reserves decoder state, the three padded pictures and allocation guards, then
+uses the remaining arena bytes for compressed input (rounded down to eight-byte
+alignment). The backend is created once, with no resizing, decoder recreation
+or preferred-size/fallback path.
 
-``MPEG_VIDEO_MEMORY_SIZE`` (384 KiB) is enough for any supported stream. A
+``MPEG_VIDEO_MEMORY_SIZE`` (384 KiB) provides at least 32 KiB input for the
+supported picture dimensions; individual encodes may need more. A
 player for smaller pictures can pass less: three pictures of 1.5 bytes per luma
 sample, with width and height rounded up to multiples of 16, plus the input
 buffer and about 2 KiB. For 160 x 120 that is about 124 KiB. ``mpeg_open()``
 returns ``MPEG_CAPACITY`` if the memory cannot hold the decoder itself, and
-``mpeg_feed()`` returns it if the stream's pictures do not fit.
+``mpeg_feed()`` returns it if the stream's pictures plus minimum input do not fit.
+``mpeg_input_capacity()`` reports the guaranteed 32-KiB minimum before the initial
+header, actual capacity after layout, or zero when closed. Initial feeds are
+bounded by that minimum even though only the header prefix is staged.
+
+The same layout is used by unpaced benchmarks and paced players. Larger input
+capacity does not require filling it or waiting: a benchmark may continue
+feeding only when the decoder requests bytes. The library contains no pacing.
 
 There is no heap fallback and no mid-stream buffer growth. Unexpected upstream
 allocation requests abort instead of returning a null pointer into upstream

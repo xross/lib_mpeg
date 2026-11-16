@@ -13,9 +13,11 @@ extern "C" {
  * its separate mpeg2.h API.
  *
  * The application owns the decoder's memory and passes it to mpeg_open().
- * MPEG_VIDEO_MEMORY_SIZE is enough for any supported stream; a smaller picture
+ * MPEG_VIDEO_MEMORY_SIZE reserves the minimum input space for supported picture
+ * dimensions; individual encodes may need more compressed buffering. A smaller picture
  * needs less (about 4.5 bytes per luma sample of the picture rounded up to
  * whole macroblocks, plus the input buffer and 2 KiB). */
+/* MPEG_INPUT_CAPACITY is the guaranteed minimum, not a fixed runtime size. */
 enum { MPEG_MAX_WIDTH = 320, MPEG_MAX_HEIGHT = 240,
        MPEG_INPUT_CAPACITY = 32768, MPEG_VIDEO_MEMORY_SIZE = 384 * 1024 };
 typedef enum {
@@ -38,8 +40,14 @@ typedef struct { size_t peak, live, capacity; int guards_ok; } mpeg_memory_stats
  * aligned to eight bytes and stay untouched by the application until
  * mpeg_close(). A second open without close, or null or misaligned memory, is
  * MPEG_ERROR. Memory too small for the decoder is MPEG_CAPACITY here; memory
- * too small for the stream's pictures is MPEG_CAPACITY from mpeg_feed(). */
+ * too small for the stream's pictures and minimum input is MPEG_CAPACITY from
+ * mpeg_feed(). After staging the initial sequence header, space for decoder
+ * state, three pictures and allocation guards is reserved. Remaining arena
+ * space becomes compressed input; no heap, resizing or fallback is used. */
 mpeg_result_t mpeg_open(void *memory, size_t size);
+/* Initially the guaranteed minimum MPEG_INPUT_CAPACITY (no backend allocation
+ * yet); actual capacity after the sequence header, or zero when closed. */
+size_t mpeg_input_capacity(void);
 /* Feed after NEED_INPUT, at most mpeg_input_space() bytes; data is copied.
  * end_of_input is final: drain mpeg_next() through MPEG_END, then close.
  * Oversized feeds are rejected without changing the decoder or taking ownership.

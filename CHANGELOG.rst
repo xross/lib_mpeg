@@ -4,6 +4,14 @@ lib_mpeg change log
 UNRELEASED
 ----------
 
+  * CHANGED: One automatic video arena layout reserves decoder/picture storage
+    and guards, then uses the remainder for compressed input; initial-header
+    staging avoids decoder recreation, buffer preferences and silent fallback
+  * ADDED: Actual compressed-input capacity reporting for applications and benchmarks
+  * FIXED: Preserve final buffered video frames when end-of-stream is signalled
+    before input-buffer compaction
+  * CHANGED: PL_MPEG buffer compaction avoids short shifts and uses non-overlapping
+    memcpy chunks for larger discards
   * CHANGED: Hardware tests use test_support's Pyxrun.run() for execution, deadlines
     and cleanup, retaining per-attempt logs; dependencies are in tests/requirements.txt
   * ADDED: Optional saturating S32 MP2 output with a standalone scalar synthesis

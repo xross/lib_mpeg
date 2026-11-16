@@ -76,6 +76,13 @@ def main():
                 print(f"FFmpeg reference: PSNR={psnr:.2f} dB max_error={max(errors)}")
                 assert int(re.search(r"arena_peak=(\d+)", result.stdout)[1]) <= 384 * 1024
         run(args.api_test, stream)
+        run(args.api_test, "--arena", stream, 400 * 1024)
+        small = args.work / f"buffered{bframes}.m1v"
+        run(ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+            "testsrc2=size=320x180:rate=25", "-frames:v", 24, "-an", "-c:v", "mpeg1video",
+            "-pix_fmt", "yuv420p", "-g", 12, "-bf", bframes, "-q:v", 6, "-f", "mpeg1video", small)
+        for arena_size in (360 * 1024, 384 * 1024, 400 * 1024, 400 * 1024 - 1):
+            run(args.api_test, "--arena", small, arena_size)
     rates = ((24000, 1001), (24, 1), (25, 1), (30000, 1001),
              (30, 1), (50, 1), (60000, 1001), (60, 1))
     for code, (numerator, denominator) in enumerate(rates, 1):
@@ -103,9 +110,9 @@ def main():
     data = (args.work / "ipb2.m1v").read_bytes()
     picture = data.index(b"\0\0\1\0")
     oversized = args.work / "oversized.m1v"
-    oversized.write_bytes(data[:picture] + b"\0\0\1\xb2" + b"A" * 40000 + data[picture:])
+    oversized.write_bytes(data[:picture] + b"\0\0\1\xb2" + b"A" * (384 * 1024) + data[picture:])
     assert run(args.bench, oversized, ok=False).returncode != 0
-    print("PASS: MPEG-1 I/P/B, FFmpeg pixels, refill boundaries, 60 decode cycles, input/size/capacity errors")
+    print("PASS: MPEG-1 I/P/B, FFmpeg pixels, refill/header boundaries, arena layouts/replay and capacity errors")
 
 
 if __name__ == "__main__":
