@@ -15,10 +15,11 @@ STAGES = ("Load", "Wait for loader", "Feed", "Decode", "Transmit / ack wait",
 
 class Reports:
     def __init__(self, frames, byte_count=None, timing=False, audio_blocks=None, sample_rate=48000,
-                 audio_checksum=None):
+                 audio_checksum=None, underflows=None):
         self.frames, self.byte_count, self.timing = frames, byte_count, timing
         self.audio_blocks, self.sample_rate = audio_blocks, sample_rate
         self.audio_checksum = audio_checksum
+        self.underflows = underflows
         self.plays = []
         self.current = {}
 
@@ -48,6 +49,22 @@ class Reports:
             self.current["audio"] = {"bytes": int(match[1]), "blocks": int(match[2]),
                                      "samples": int(match[3]), "rate": int(match[4]),
                                      "arena_peak": int(match[5]), "checksum": match[6]}
+        elif text.startswith("MP2 underflows:"):
+            match = re.fullmatch(r"MP2 underflows: count=(\d+) held_samples/channel=(\d+) held_ms=(\d+) "
+                                 r"dropped_samples/channel=(\d+) strict=([01])", text)
+            if not match:
+                raise RuntimeError("Invalid underflow report: " + text)
+            count, held, milliseconds, dropped, strict = map(int, match.groups())
+            if self.underflows is not None and count != self.underflows:
+                raise RuntimeError("Unexpected audio underflow count: " + text)
+            if held != dropped or bool(count) != bool(held) or (strict and count):
+                raise RuntimeError("Inconsistent underflow accounting: " + text)
+            rate = self.current.get("audio", {}).get("rate", self.sample_rate)
+            if milliseconds != (held * 1000 // rate if rate else 0):
+                raise RuntimeError("Incorrect held duration: " + text)
+            self.current["underflows"] = {"count": count, "held_samples": held,
+                                          "held_ms": milliseconds, "dropped_samples": dropped,
+                                          "strict": bool(strict)}
         elif text.startswith("MPEG arena:"):
             match = re.fullmatch(r"MPEG arena: peak=(\d+) live-after-close=0 bytes", text)
             if not match:
@@ -84,6 +101,8 @@ class Reports:
                         raise RuntimeError("Missing frame timing distributions")
                     if self.audio_blocks is not None and "audio" not in self.current:
                         raise RuntimeError("Missing audio decoder statistics")
+                    if self.underflows is not None and "underflows" not in self.current:
+                        raise RuntimeError("Missing audio underflow statistics")
                     self.plays.append(self.current)
                     self.current = {}
 
@@ -120,10 +139,13 @@ def main():
     parser.add_argument("--sample-rate", type=int, default=48000)
     parser.add_argument("--audio-checksum", type=lambda text: int(text, 16),
                         help="Expected PCM checksum in hex; use the selected format's reference")
+    parser.add_argument("--underflows", type=int, help="Require this exact audio underflow count")
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     if min(args.frames, args.plays, args.audio_blocks, args.sample_rate) < 1 or args.timeout <= 0:
         parser.error("counts, sample rate and timeout must be positive")
+    if args.underflows is not None and args.underflows < 0:
+        parser.error("underflow count must be nonnegative")
     for path in (args.xe, args.stream):
         if path is None:
             continue
@@ -137,7 +159,8 @@ def main():
         byte_count = result["stream_bytes"] = args.stream.stat().st_size
         result["stream_sha256"] = digest(args.stream)
     reports = Reports(args.frames, byte_count, args.timing,
-                      args.audio_blocks if args.audio else None, args.sample_rate, args.audio_checksum)
+                      args.audio_blocks if args.audio else None, args.sample_rate, args.audio_checksum,
+                      args.underflows)
     result["run"] = measure(args.xe, args.adapter_id, args.plays, args.timeout, reports, args.work / "xrun.log")
     (args.work / "results.json").write_text(json.dumps(result, indent=2) + "\n")
     print(f"PASS: {args.plays} complete hardware plays, {args.frames} frames/play")

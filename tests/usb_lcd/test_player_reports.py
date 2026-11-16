@@ -80,6 +80,25 @@ class ParserTests(unittest.TestCase):
             parser.line(line)
         self.assertEqual(len(parser.plays), 1)
 
+    def test_underflow_accounting(self):
+        line = "MP2 underflows: count=1 held_samples/channel=240 held_ms=5 dropped_samples/channel=240 strict=0"
+        parser = Reports(6, underflows=1)
+        parser.line(line)
+        for text in report():
+            parser.line(text)
+        self.assertEqual(parser.plays[0]["underflows"]["held_ms"], 5)
+        for bad in (line.replace("count=1", "count=0"), line.replace("held_ms=5", "held_ms=6"),
+                    line.replace("strict=0", "strict=1"), line.replace("dropped_samples/channel=240",
+                    "dropped_samples/channel=0")):
+            with self.subTest(line=bad), self.assertRaises(RuntimeError):
+                Reports(6).line(bad)
+        with self.assertRaises(RuntimeError):
+            Reports(6, underflows=0).line(line)
+        with self.assertRaises(RuntimeError):
+            parser = Reports(6, underflows=0)
+            for text in report():
+                parser.line(text)
+
 
 class RunnerTests(unittest.TestCase):
     def test_reports_stop_the_player_after_the_required_plays(self):
