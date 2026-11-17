@@ -836,11 +836,10 @@ Hardware runs use ``Pyxrun`` from ``test_support`` for deadlines,
 process cleanup and logs; ``tests/requirements.txt`` installs it into the
 active venv. Each attempt retains its own ``*.attempt-N.log``. The
 latest attempt also remains available under the original variant log name.
-Both hardware wrappers use ``Pyxrun.run()``: the audio benchmark disables stdout
-replay with ``echo=False`` and reads its retained log, while the player uses
-``until=`` to validate complete reports and stop after the requested plays.
-Process lifecycle tests belong to ``test_support``; the local tests cover MPEG
-report validation and PCM retry artifacts, not a second hardware session.
+The audio benchmark uses ``Pyxrun.run()`` with stdout replay disabled
+(``echo=False``) and reads its retained log. Process lifecycle tests belong to
+``test_support``; the local tests cover decoder benchmark report validation and
+PCM retry artifacts, not a second hardware session.
 Select the target matching the physical board at configure time. The supplied
 ``-DAPP_HW_TARGET=XK-EVK-XU316-AIV.xn`` uses XL1, unlike the stock Explorer
 target's XL0. XCommon requires custom XN files to live within the application
@@ -896,16 +895,6 @@ For a 16-frame soundtrack excerpt starting at 30 seconds, the same four-way
 hardware test measured 5.683, 3.033, 7.965 and 1.941 ms/frame. S32 scalar/vector
 PCM was identical, with peak error ``7.38e-7`` and SNR 115.01 dB. All of these
 target comparisons used xSCOPE, with no host-file access during the benchmark.
-
-``tests/usb_lcd`` contains only end-to-end hardware integration tools for the
-external USB-storage/LCD application, not another decoder or native test project.
-``tests/usb_lcd/compare_mpeg_idct.py --help`` describes the two-build USB/LCD
-comparison. It validates complete reports, frame/byte counts, EOF status and
-arena cleanup, records input/executable hashes and compares completed plays
-after startup. It reuses ``tests/usb_lcd/run_hardware.py``, which also provides a bounded smoke
-runner for the video/MP2 player. Hardware comparisons require an idle XTAG and
-the appropriate input already on the USB stick; neither runner writes flash or
-USB media. Use xSCOPE for the real player, not JTAG logging.
 
 Standalone backend comparison
 =============================

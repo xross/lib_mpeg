@@ -147,9 +147,7 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
     add_test(NAME audio_benchmark_reports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/test_bench_audio_target.py)
     set_tests_properties(audio_benchmark_reports PROPERTIES TIMEOUT 30)
-    add_test(NAME player_report_parser COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/usb_lcd/test_player_reports.py)
-    set_tests_properties(mpeg_video_quality mpeg_audio_reference player_report_parser PROPERTIES
+    set_tests_properties(mpeg_video_quality mpeg_audio_reference PROPERTIES
         ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1" TIMEOUT 240)
 elseif(MPEG_BACKEND STREQUAL "libmpeg2")
     include(${root}/cmake/upstream.cmake)
