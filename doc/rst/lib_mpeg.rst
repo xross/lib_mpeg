@@ -34,8 +34,8 @@ push-input API; the optional backend retains the upstream libmpeg2 API. A shared
 backend interface is deferred until real player requirements establish it.
 
 The default build does not compile or link libmpeg2. The upstream sources and
-what has been changed in them are described under `Third-party decoders`_;
-licensing is described in ``LICENSE.rst``.
+what has been changed in them, and their licences, are described under
+`Third-party decoders`_.
 
 *******************
 The PL_MPEG adapter
