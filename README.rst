@@ -34,6 +34,8 @@ Features
 
 * MPEG-1 video decoding (I, P and B pictures) to progressive YUV420, up to 320 x 240.
 * Push-input API: the application owns storage I/O and feeds compressed bytes.
+* Storage-independent MPEG-1 program-stream reader for video E0 and MP2 audio
+  C0, using caller-supplied I/O callbacks and a configurable fixed-size cache.
 * One automatic arena layout for benchmarks and applications: after the initial
   sequence header, reserve decoder state, three pictures and allocation guards,
   then use the remaining memory for compressed input. ``mpeg_input_capacity()``
@@ -51,7 +53,7 @@ Features
   transform remains selectable.
 * Options set in an application ``mpeg_conf.h`` header: inverse DCT, colour
   converter, and the MP2 decoder's fused synthesis window and reciprocal output
-  scaling, or integer PCM with scalar/XS3 synthesis selection.
+  scaling, or integer PCM with scalar/XS3 synthesis selection, and the PS cache size.
 * Optional libmpeg2 backend for MPEG-2 evaluation, with a 400 KiB guarded arena.
 * Standalone XU316 benchmark examples for each backend with decode timing.
 * Native reference tests checked against unmodified upstream and FFmpeg output.
@@ -64,14 +66,15 @@ Known issues
 
 * The default video inverse DCT is not bit-exact with upstream PL_MPEG. Select
   ``MPEG_VIDEO_IDCT_PLMPEG`` when bit-exact output is required.
-* Elementary streams only (``.m1v`` video, MP2 audio). Multiplexed ``.mpg``
-  program streams must be demultiplexed by the application.
+* Decoder inputs are elementary streams (``.m1v`` video, MP2 audio). Use the
+  optional ``mpeg_ps_reader.h`` helper to demultiplex MPEG-1 ``.mpg`` files;
+  MPEG-2 program streams are not supported by that helper.
 * No display, storage or audio output, and no audio/video synchronisation, is
   included; those are the application's responsibility.
 * Trusted input only: this is not a hardened validator for malformed or truncated
   streams.
-* One video and one audio decoder per tile. Resolution changes, concatenated streams and seeking are
-  unsupported; close and reopen to replay.
+* One video and one audio decoder per tile. Resolution changes, concatenated
+  streams and seeking are unsupported; close and reopen to replay.
 * A compressed picture plus decoder lookahead must fit in the automatically
   sized input buffer (at least 32 KiB). Not every encode/mux layout fits a given
   arena; increase supplied memory or reduce quality/bitrate if necessary. There

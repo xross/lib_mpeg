@@ -9,7 +9,8 @@ extern "C" {
 /* Experimental PL_MPEG video adapter. One video decoder per tile, driven from
  * one task; no heap allocation and no callbacks. Not yet a cross-backend ABI.
  * Only fixed-resolution MPEG-1 elementary streams are accepted, not .mpg.
- * MP2 audio is declared in mpeg_audio.h. The optional libmpeg2 backend retains
+ * Use mpeg_ps_reader.h to demultiplex MPEG-1 program streams. MP2 audio is
+ * declared in mpeg_audio.h. The optional libmpeg2 backend retains
  * its separate mpeg2.h API.
  *
  * The application owns the decoder's memory and passes it to mpeg_open().

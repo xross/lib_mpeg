@@ -325,6 +325,10 @@ library includes it; options it does not define keep their defaults.
      - 1 on XS3, 0 elsewhere
      - Select the XS3 integer synthesis window, or its bit-identical portable C
        model. Only applies to S32; explicit vector selection requires XS3.
+   * - ``MPEG_PS_CACHE_BYTES``
+     - 4096
+     - Fixed cache in ``mpeg_ps_reader_t`` (both backends). Must be positive;
+       use the same configuration header for the library and all callers.
 
 These are C preprocessor options, not CMake cache settings. Use ``mpeg_conf.h``
 for application configuration, or explicit compiler definitions in a dedicated
@@ -448,8 +452,8 @@ the video decoder: it may run on another task or another tile.
     if (mpeg_audio_finish() != MPEG_END) { /* failed or truncated */ }
     mpeg_audio_close();
 
-* Input is an MP2 elementary stream starting on a frame header. The application
-  demultiplexes ``.mpg`` program streams itself.
+* Input is an MP2 elementary stream starting on a frame header. Applications
+  can use the library's ``mpeg_ps_reader.h`` helper for MPEG-1 program streams.
 * Each frame is ``MPEG_AUDIO_FRAME_SAMPLES`` (1152) interleaved left/right pairs
   of ``mpeg_audio_sample_t``: normalized ``float`` by default, or ``int32_t``
   Q1.31 with ``MPEG_AUDIO_FORMAT_S32``. Valid until the next call. A mono stream is
@@ -481,6 +485,38 @@ peak on the tested XS3 target; 28112 on the 64-bit native host).
 
 The portable 64-bit S32 model prioritises correctness and is slower than float
 on XS3.
+
+MPEG-1 program streams
+======================
+
+``mpeg_ps_reader.h`` provides an optional sequential PS demultiplexer, independent
+of the decoder backend, FatFs, USB, display and audio output. It selects video E0
+and MP2 audio C0 and skips other PES streams. MPEG-2 pack headers are rejected.
+The application supplies one reader instance and two synchronous callbacks:
+
+* The read callback returns 0 on success, setting the byte count (0 means EOF),
+  or nonzero on I/O failure. Declare it with ``MPEG_PS_READ_CALLBACK`` on xcore.
+* The audio callback consumes each MP2 span before returning: 0 means success,
+  nonzero means failure. Declare it with ``MPEG_PS_AUDIO_CALLBACK`` on xcore.
+
+Call ``mpeg_ps_init()`` once, then ``mpeg_ps_read_video()`` until it returns 0
+(clean EOF) or -1 (I/O, sink, format or truncation error). A return of 1 supplies
+video bytes for ``mpeg_feed()``. ``mpeg_ps_audio_start()`` reports the first audio
+PTS relative to the first video PTS, in signed milliseconds, once both are known;
+``mpeg_ps_audio_position()`` reports the latest audio packet's relative position.
+The application still decides how to buffer, pace and synchronise those streams.
+
+The cache is part of the caller-owned ``mpeg_ps_reader_t``: set
+``MPEG_PS_CACHE_BYTES`` in ``mpeg_conf.h`` to change its default 4096 bytes.
+Packets stream across cache refills without packet-sized allocations or heap
+use. This is the same trusted-input MPEG-1 reader used by the USB media demo,
+not a general MPEG container parser.
+
+The native suite owns the PS boundary/timestamp tests and FFmpeg byte-identity
+checks. To include a full local MPEG-1 program stream, from this repository::
+
+    .venv/bin/python tests/test_ps_demux.py --demux build-native/mpeg_ps_demux \
+      --work build-native/ps-full --full /path/to/VIDEO.MPG
 
 Colour conversion to RGB565
 ===========================
@@ -796,8 +832,8 @@ The MP2 reference check compares baseline PCM bit for bit with pristine
 upstream and bounds the reciprocal-scale/fused-window variants to a peak
 difference of 1e-6 and an SNR of at least 120 dB. It feeds raw MP2 directly into
 ``mpeg_audio_*()`` and checks refill boundaries, replay, malformed headers and
-truncation. PS demultiplexing is application-owned and is not part of these
-codec tests. The video comparator checks
+truncation. The separate PS-reader tests check container bytes and timestamps,
+not codec output. The video comparator checks
 sample counts, per-plane error, PSNR and first/final windows against pristine
 PL_MPEG and FFmpeg. Target kernel tests check vector execution against the scalar
 model; native models alone do not validate hardware instructions.

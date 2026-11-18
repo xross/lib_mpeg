@@ -1,4 +1,4 @@
-/* Build-time configuration for lib_mpeg (PL_MPEG backend).
+/* Build-time configuration for lib_mpeg (PL_MPEG arithmetic and PS reader).
  *
  * An application may override any option below by defining it in an optional
  * mpeg_conf.h header on its include path, or with a compiler definition.
@@ -15,6 +15,16 @@
 #if __has_include("mpeg_conf.h")
 #include "mpeg_conf.h"
 #endif
+#endif
+
+/** Bytes cached by the optional MPEG-1 program-stream reader. No heap is used.
+ *  This affects mpeg_ps_reader_t's layout: use the same mpeg_conf.h for the
+ *  library and every caller. Packet and output sizes need not match the cache. */
+#ifndef MPEG_PS_CACHE_BYTES
+#define MPEG_PS_CACHE_BYTES 4096
+#endif
+#if MPEG_PS_CACHE_BYTES < 1
+#error MPEG_PS_CACHE_BYTES must be positive
 #endif
 
 /** Original PL_MPEG transform; output is byte-identical to upstream PL_MPEG. */

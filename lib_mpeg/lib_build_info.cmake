@@ -12,7 +12,6 @@ set(LIB_ASM_SRCS "")
 if(MPEG_BACKEND STREQUAL "pl_mpeg")
     # Options live in api/mpeg_config.h; an application overrides them in an
     # optional mpeg_conf.h.
-    set(LIB_OPTIONAL_HEADERS mpeg_conf.h)
     # Kernels are assembled whichever implementation the header selects.
     set(LIB_ASM_SRCS ../third_party/pl_mpeg/xcore/pl_mpeg_idct_xs3.S
         ../third_party/pl_mpeg/xcore/pl_mpeg_audio_xs3.S src/rgb565/mpeg_rgb565_xs3.S)
@@ -40,6 +39,8 @@ elseif(MPEG_BACKEND STREQUAL "libmpeg2")
 else()
     message(FATAL_ERROR "Unknown MPEG_BACKEND: ${MPEG_BACKEND}")
 endif()
+list(APPEND LIB_C_SRCS src/ps/mpeg_ps_reader.c)
+set(LIB_OPTIONAL_HEADERS mpeg_conf.h)
 set(LIB_XC_SRCS "")
 set(LIB_CXX_SRCS "")
 XMOS_REGISTER_MODULE()

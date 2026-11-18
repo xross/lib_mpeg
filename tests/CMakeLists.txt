@@ -189,10 +189,36 @@ elseif(MPEG_BACKEND STREQUAL "libmpeg2")
 else()
     message(FATAL_ERROR "Unknown MPEG_BACKEND: ${MPEG_BACKEND}")
 endif()
+# The PS reader is storage- and decoder-independent, shared by both backends.
+add_library(mpeg_ps STATIC ${root}/lib_mpeg/src/ps/mpeg_ps_reader.c)
+target_include_directories(mpeg_ps PUBLIC ${root}/lib_mpeg/api)
+target_compile_options(mpeg_ps PRIVATE -Wall -Wextra -Werror)
+add_executable(mpeg_ps_reader_test mpeg_ps_reader_test.c)
+add_executable(mpeg_ps_demux mpeg_ps_demux.c)
+foreach(target mpeg_ps_reader_test mpeg_ps_demux)
+    target_link_libraries(${target} PRIVATE mpeg_ps)
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Werror)
+endforeach()
+# Exercise configuration through an application header, not compiler defines.
+add_executable(mpeg_ps_reader_small_test mpeg_ps_reader_test.c
+    ${root}/lib_mpeg/src/ps/mpeg_ps_reader.c)
+target_include_directories(mpeg_ps_reader_small_test PRIVATE ps_conf ${root}/lib_mpeg/api)
+target_compile_options(mpeg_ps_reader_small_test PRIVATE -Wall -Wextra -Werror)
+list(APPEND test_targets mpeg_ps_reader_test mpeg_ps_demux mpeg_ps_reader_small_test)
+add_test(NAME mpeg_ps_reader COMMAND mpeg_ps_reader_test)
+add_test(NAME mpeg_ps_reader_small_cache COMMAND mpeg_ps_reader_small_test)
+find_program(FFMPEG_EXECUTABLE ffmpeg REQUIRED)
+add_test(NAME mpeg_ps_ffmpeg COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_LIST_DIR}/test_ps_demux.py --demux $<TARGET_FILE:mpeg_ps_demux>
+    --ffmpeg "${FFMPEG_EXECUTABLE}" --work ${CMAKE_CURRENT_BINARY_DIR}/ps-fixtures)
+set_tests_properties(mpeg_ps_reader mpeg_ps_reader_small_cache mpeg_ps_ffmpeg PROPERTIES
+    TIMEOUT 120 ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1")
+
 foreach(target ${test_targets})
     target_compile_options(${target} PRIVATE -UNDEBUG)
 endforeach()
 if(MPEG_SANITIZE)
+    target_compile_options(mpeg_ps PRIVATE -fsanitize=address,undefined)
     # Legacy integer transforms shift negative fixed-point values.
     target_compile_options(${decoder_target} PRIVATE -fsanitize=address,undefined -fno-sanitize=shift)
     foreach(target ${test_targets})

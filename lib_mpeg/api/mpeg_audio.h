@@ -13,8 +13,8 @@ extern "C" {
  * task, which may be a different task or tile from the video decoder. No heap
  * allocation and no callbacks.
  *
- * Input is an MP2 elementary stream: the application demultiplexes a program
- * stream itself. The stream must start on a frame header and keep one format;
+ * Input is an MP2 elementary stream: applications can use mpeg_ps_reader.h to
+ * demultiplex an MPEG-1 program stream. It must start on a frame header and keep one format;
  * there is no resynchronisation after a damaged frame. Output pacing and
  * audio/video synchronisation are left to the application. */
 enum { MPEG_AUDIO_INPUT_CAPACITY = 4096, MPEG_AUDIO_MEMORY_SIZE = 28672,
