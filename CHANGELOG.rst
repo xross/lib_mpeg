@@ -1,7 +1,7 @@
 lib_mpeg change log
 ===================
 
-UNRELEASED
-----------
+0.1.0
+-----
 
   * Initial release
