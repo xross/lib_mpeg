@@ -25,7 +25,7 @@ if(MPEG_BACKEND STREQUAL "pl_mpeg")
     target_include_directories(mpeg_scalar PUBLIC ${root}/lib_mpeg/api PRIVATE ${root}/lib_mpeg/src/pl_mpeg
         ${root}/third_party/pl_mpeg)
     if(MPEG_TEST_ORIGINAL_IDCT)
-        target_compile_definitions(mpeg_scalar PRIVATE MPEG_VIDEO_IDCT=MPEG_VIDEO_IDCT_PLMPEG)
+        target_compile_definitions(mpeg_scalar PUBLIC MPEG_VIDEO_IDCT=MPEG_VIDEO_IDCT_PLMPEG)
     endif()
     if(UNIX AND NOT APPLE)
         target_link_libraries(mpeg_scalar PUBLIC m)

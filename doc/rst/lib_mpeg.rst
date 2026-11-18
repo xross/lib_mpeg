@@ -691,10 +691,20 @@ For MPEG-2 substitute ``app_mpeg2_benchmark`` and a different build directory.
 Executables are written to the build directory's ``bin/`` so that comparison
 builds cannot overwrite one another.
 
+Configure the PL_MPEG example's codec options in
+``examples/app_plmpeg_benchmark/src/mpeg_conf.h``; its defaults select VPU16 on
+XS3. The sequence report includes the numeric IDCT selection (0 original,
+1 portable model, 2 XS3 VPU). For an AIV board add
+``-DAPP_HW_TARGET=XK-EVK-XU316-AIV.xn`` when configuring: its xSCOPE link is XL1,
+not the stock Explorer target's XL0.
+
 Each example runs a single decoder task on tile 1; tile 0 only runs startup and
 runtime infrastructure. The benchmark reads ``VIDEO.M1V`` from the run working
-directory using host file I/O over xSCOPE, which is always enabled. File I/O is
-outside the timed decoder calls and is not a storage validation.
+directory using debugger-serviced host file I/O, with xSCOPE text output enabled.
+Host reads still use JTAG; large inputs can take much longer in wall time than
+the reported codec time. File I/O is outside the timed decoder calls and is not
+a storage validation. The PL_MPEG example prints progress every 16 pictures,
+outside timing; only its final checked result establishes a completed run.
 
 To run on hardware::
 
@@ -931,6 +941,46 @@ For a 16-frame soundtrack excerpt starting at 30 seconds, the same four-way
 hardware test measured 5.683, 3.033, 7.965 and 1.941 ms/frame. S32 scalar/vector
 PCM was identical, with peak error ``7.38e-7`` and SNR 115.01 dB. All of these
 target comparisons used xSCOPE, with no host-file access during the benchmark.
+
+Recorded standalone PL_MPEG hardware measurement
+================================================
+
+Two completed ``app_plmpeg_benchmark`` runs on XK-EVK-XU316-AIV at 600 MHz,
+with XTC Tools 15.3.1 and one decoder task on tile 1, measured the following.
+``mpeg_conf.h`` selected ``MPEG_VIDEO_IDCT_VPU16``. The input was 48 pictures
+of FFmpeg ``testsrc2`` at 320 x 240, 25 FPS, GOP 12, two B pictures and qscale 6,
+read in 4096-byte chunks. The compressed file was 192572 bytes.
+
+.. list-table:: Standalone PL_MPEG, two hardware runs
+   :header-rows: 1
+
+   * - Metric
+     - Run 1
+     - Run 2
+   * - Decode-only FPS
+     - 96.27
+     - 96.27
+   * - Mean decoder time per picture
+     - 10.387 ms
+     - 10.387 ms
+   * - Feed plus decode FPS
+     - 95.77
+     - 95.77
+   * - Worst decode API call
+     - 19.662 ms
+     - 19.663 ms
+   * - Video arena peak
+     - 393192 bytes
+     - 393192 bytes
+
+Both runs returned ``status=OK``, 48 pictures and hash ``431a7395``, matching the
+native vector-arithmetic model.
+
+These are short synthetic-workload codec timings, not USB/LCD player rates or a
+worst-case guarantee. File reads, hashing, output and open/close were excluded
+from the timed calls. Host-assisted wall times were 153.4 and 152.9 seconds,
+dominated by host-file servicing rather than the approximately 0.499 seconds
+spent in decoder calls.
 
 Standalone backend comparison
 =============================

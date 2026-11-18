@@ -7,6 +7,6 @@
 #pragma stackfunction 4096
 void run_plmpeg_benchmark(void)
 {
-    printf("Scalar PL_MPEG benchmark on tile 1; no VPU or hardware validation\n");
+    printf("PL_MPEG decoder benchmark on tile 1; input/output excluded from timing\n");
     if (plmpeg_benchmark("VIDEO.M1V", NULL, 4096)) exit(1);
 }

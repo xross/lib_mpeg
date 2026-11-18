@@ -18,6 +18,7 @@ static bench_time_t now(void)
 static uint64_t elapsed(bench_time_t start) { return now() - start; }
 #endif
 #include "mpeg.h"
+#include "mpeg_config.h"
 #include "plmpeg_benchmark.h"
 
 static uint8_t input[4096];
@@ -62,8 +63,14 @@ int plmpeg_benchmark(const char *input_path, const char *output_path, unsigned r
         if (result == MPEG_END) break;
         if (result == MPEG_FRAME) {
             if (frame.number != frames || !output_frame(output, &frame, &hash)) failed = 1;
-            if (!frames) printf("Sequence: %ux%u MPEG-1 YUV420 scalar %s\n", frame.width, frame.height, mpeg_backend_name());
+            if (!frames) printf("Sequence: %ux%u MPEG-1 YUV420 %s IDCT=%u\n",
+                                frame.width, frame.height, mpeg_backend_name(),
+                                (unsigned)MPEG_VIDEO_IDCT);
             ++frames;
+#ifdef __xcore__
+            /* Host-file reads can be slow. Progress is outside decoder timing. */
+            if (!(frames % 16)) printf("Decoded %u pictures\n", frames);
+#endif
         } else if (result == MPEG_NEED_INPUT) {
             size_t space = mpeg_input_space();
             size_t count = space < read_size ? space : read_size;
